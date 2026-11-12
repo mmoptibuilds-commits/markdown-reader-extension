@@ -60,8 +60,10 @@ test.beforeAll(async () => {
             return true;
           },
           remove: async () => true,
+          onAdded: listenerSet,
           onRemoved: listenerSet,
         },
+        extension: { isAllowedFileSchemeAccess: async () => localStorage.getItem('reader-preview-file-access') === 'true' },
         tabs: {
           query: async () => [{ id: 1, url: location.href }],
           create: async (properties?: { url?: string }) => {
@@ -231,4 +233,35 @@ test('popup requests a single site and opens the reader URL', async () => {
   await expect.poll(() => popupPage.evaluate(() => localStorage.getItem('reader-preview-requested-origins'))).toBe('["https://example.test/*"]');
   await expect.poll(() => popupPage.evaluate(() => localStorage.getItem('reader-preview-last-created-url'))).toContain('/reader.html?url=');
   await popupPage.close();
+});
+
+test('settings explain local automatic opening states and link to browser settings', async () => {
+  const settingsPage = await context.newPage();
+  await settingsPage.goto('http://127.0.0.1:4173/options.html#files');
+  const toggle = settingsPage.getByRole('checkbox', { name: /Automatically open local Markdown files/u });
+  const status = settingsPage.locator('.local-file-status');
+  await expect(toggle).not.toBeChecked();
+  await expect(status).toHaveAttribute('data-state', 'disabled');
+  await expect(status).toContainText('The browser also needs to allow file access');
+
+  await toggle.check({ force: true });
+  await expect(status).toHaveAttribute('data-state', 'permission-required');
+  await expect(status).toContainText('Allow access to file URLs');
+  await settingsPage.getByRole('button', { name: 'Open extension settings' }).click();
+  expect(await settingsPage.evaluate(() => localStorage.getItem('reader-preview-last-created-url'))).toBe('chrome://extensions/?id=local-reader-preview');
+
+  await settingsPage.evaluate(() => localStorage.setItem('reader-preview-file-access', 'true'));
+  await settingsPage.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(status).toHaveAttribute('data-state', 'active');
+  await expect(settingsPage.getByRole('button', { name: 'Open extension settings' })).toHaveCount(0);
+
+  await settingsPage.reload();
+  await expect(settingsPage.getByRole('checkbox', { name: /Automatically open local Markdown files/u })).toBeChecked();
+  const accessibility = await new AxeBuilder({ page: settingsPage }).include('#files').analyze();
+  expect(accessibility.violations.map(({ id, nodes }) => ({ id, targets: nodes.map((node) => node.target.join(' ')) }))).toEqual([]);
+  await settingsPage.setViewportSize({ width: 360, height: 780 });
+  expect(await settingsPage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+  await settingsPage.screenshot({ path: path.resolve(screenshotDir, 'settings-local-files-360.png'), fullPage: true });
+  await settingsPage.evaluate(() => localStorage.removeItem('reader-preview-file-access'));
+  await settingsPage.close();
 });
