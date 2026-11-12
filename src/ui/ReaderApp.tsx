@@ -33,7 +33,8 @@ import {
   type ReactElement,
   type KeyboardEvent,
 } from 'react';
-import { isMarkdownDocument, renderMarkdown, sanitizeSvg, type RenderedMarkdown } from '../core/markdown';
+import { renderMarkdown, sanitizeSvg, type RenderedMarkdown } from '../core/markdown';
+import { documentNameFromUrl, readRemoteMarkdown } from '../core/remote';
 import { DEFAULT_SETTINGS, type ReaderSettings } from '../core/settings';
 import {
   addRecent,
@@ -251,6 +252,10 @@ function addCodeLines(code: HTMLElement): void {
   code.dataset.lineMarkup = 'true';
 }
 
+/** Smooth scrolling unless the user asked the system to reduce motion. */
+const scrollBehavior = (): ScrollBehavior =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+
 export function ReaderApp(): ReactElement {
   const [settings, setSettings] = useState<ReaderSettings>({ ...DEFAULT_SETTINGS });
   const [activeDocument, setActiveDocument] = useState<ReaderDocument>();
@@ -315,7 +320,7 @@ export function ReaderApp(): ReactElement {
           ...(pending.size !== undefined ? { size: pending.size } : {}),
         };
         setActiveDocument(doc);
-        void addRecent({ id: doc.id, name: doc.name, kind: doc.kind });
+        void addRecent({ id: doc.id, name: doc.name, kind: doc.kind }).catch(() => undefined);
       }
     }).catch(() => setError('Reader preferences could not be loaded. You can still open a document.'));
     return () => { cancelled = true; };
@@ -389,7 +394,7 @@ export function ReaderApp(): ReactElement {
     if (matches.length > 0) {
       const nextIndex = Math.min(searchIndex, matches.length - 1);
       setSearchIndex(nextIndex);
-      matches[nextIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      matches[nextIndex]?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
     }
   }, [rendered, searchOpen, searchTerm, searchIndex, sourceMode]);
 
@@ -489,14 +494,25 @@ export function ReaderApp(): ReactElement {
   }, [rendered, sourceMode]);
 
   useEffect(() => {
-    const onScroll = () => {
+    // Coalesce scroll events into one state update per frame instead of re-rendering per event.
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
       const max = document.documentElement.scrollHeight - window.innerHeight;
       setScrollProgress(max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0);
     };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(measure);
+    };
     window.addEventListener('scroll', onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener('scroll', onScroll);
+    measure();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [activeDocument, rendered]);
+
+  const wordCount = useMemo(() => (rendered ? rendered.body.trim().split(/\s+/u).filter(Boolean).length : 0), [rendered]);
 
   useEffect(() => {
     if (!activeDocument || !settings.restorePosition) return;
@@ -672,9 +688,10 @@ export function ReaderApp(): ReactElement {
     try {
       const root = await picker();
       const files: File[] = [];
+      let truncated = false;
       const walk = async (handle: DirectoryHandleLike, prefix: string): Promise<void> => {
         for await (const [name, entry] of handle.entries()) {
-          if (files.length >= 2500) return;
+          if (files.length >= 2500) { truncated = true; return; }
           const path = prefix ? `${prefix}/${name}` : name;
           if ('kind' in entry && entry.kind === 'file') {
             const file = await entry.getFile();
@@ -687,9 +704,10 @@ export function ReaderApp(): ReactElement {
       };
       await walk(root, '');
       await openFolderFiles(files, root.name);
+      if (truncated) setError('Only the first 2,500 files were loaded. Choose a smaller folder to see every file.');
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
-      setError('The folder could not be read. Try the folder picker fallback or choose a smaller folder.');
+      setError('The folder could not be read. Check that the browser can access it, then try again.');
     }
   }, [openFolderFiles]);
 
@@ -714,27 +732,19 @@ export function ReaderApp(): ReactElement {
       if (reportErrors) setError('Only public HTTP and HTTPS URLs without embedded credentials are supported.');
       return undefined;
     }
-    const originPattern = `${url.origin}/*`;
-    const granted = await browser.permissions.contains({ origins: [originPattern] });
+    const granted = await browser.permissions.contains({ origins: [`${url.origin}/*`] });
     if (!granted) {
       if (reportErrors) setError(`Allow access to ${url.origin} in the popup, then open this address again.`);
       return undefined;
     }
     setLoadingRemote(reportErrors);
     try {
-      const response = await fetch(url, { credentials: 'omit', redirect: 'follow', cache: 'no-store' });
-      if (!response.ok) throw new Error(`The server returned ${response.status} ${response.statusText}.`);
-      const finalUrl = new URL(response.url || url.href);
-      if (finalUrl.origin !== url.origin && !(await browser.permissions.contains({ origins: [`${finalUrl.origin}/*`] }))) {
-        throw new Error(`The server redirected to ${finalUrl.origin}. Allow that site in the popup before following the redirect.`);
-      }
-      const type = response.headers.get('content-type') ?? '';
-      if (!isMarkdownDocument(url.href, type)) throw new Error('This URL did not identify itself as Markdown. Use a .md URL or a Markdown content type.');
-      const text = await response.text();
-      if (text.length > 8_000_000) throw new Error('This document is larger than the 8 MB reading limit.');
-      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).at(-1) || url.hostname);
+      const { text, finalUrl } = await readRemoteMarkdown(url, fetch, {
+        isOriginAllowed: async (origin) => browser.permissions.contains({ origins: [`${origin}/*`] }),
+      });
+      const name = documentNameFromUrl(url);
       const id = `remote:${url.href}`;
-      const doc: ReaderDocument = { id, name, source: url.href, sourceUrl: response.url || url.href, text, kind: 'remote' };
+      const doc: ReaderDocument = { id, name, source: url.href, sourceUrl: finalUrl, text, kind: 'remote' };
       if (reportErrors) {
         setActiveDocument(doc);
         setSourceMode('rendered');
@@ -742,8 +752,8 @@ export function ReaderApp(): ReactElement {
         setRemoteDialogOpen(false);
         setError('');
         setScrollProgress(0);
+        void addRecent({ id, name, kind: 'remote', url: url.href }).catch(() => undefined);
       }
-      if (reportErrors) await addRecent({ id, name, kind: 'remote', url: url.href });
       return doc;
     } catch (reason) {
       if (reportErrors) setError(reason instanceof Error ? reason.message : 'The Markdown URL could not be loaded. Check the address and try again.');
@@ -795,7 +805,7 @@ export function ReaderApp(): ReactElement {
       return;
     }
     await makeLocalDocument(file, path, folder);
-    if (hash) window.setTimeout(() => document.getElementById(decodeURIComponent(hash.replace(/^#/u, '')))?.scrollIntoView({ behavior: 'smooth' }), 150);
+    if (hash) window.setTimeout(() => document.getElementById(decodeURIComponent(hash.replace(/^#/u, '')))?.scrollIntoView({ behavior: scrollBehavior() }), 150);
   }, [folder, makeLocalDocument]);
 
   useEffect(() => {
@@ -930,7 +940,7 @@ export function ReaderApp(): ReactElement {
         </div>
         {sidebarTab === 'outline' && <nav className="outline-nav" aria-label="Table of contents">
           {!rendered?.headings.length && <p className="sidebar-empty">Headings appear here as you read.</p>}
-          {rendered?.headings.map((heading) => <a key={heading.id} href={`#${heading.id}`} className={`outline-link ${activeHeading === heading.id ? 'is-active' : ''}`} style={{ '--heading-level': heading.level } as CSSProperties} onClick={(event) => { event.preventDefault(); document.getElementById(heading.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); setSidebarOpen(false); }}>{heading.text}</a>)}
+          {rendered?.headings.map((heading) => <a key={heading.id} href={`#${heading.id}`} className={`outline-link ${activeHeading === heading.id ? 'is-active' : ''}`} style={{ '--heading-level': heading.level } as CSSProperties} onClick={(event) => { event.preventDefault(); document.getElementById(heading.id)?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' }); setSidebarOpen(false); }}>{heading.text}</a>)}
         </nav>}
         {sidebarTab === 'files' && <div className="file-navigation">
           <div className="sidebar-section-head"><span>{folder?.name ?? 'Folder workspace'}</span><button className="text-button" type="button" onClick={() => void openDirectoryPicker()}>{folder ? 'Change' : 'Open'}</button></div>
@@ -940,7 +950,7 @@ export function ReaderApp(): ReactElement {
         {sidebarTab === 'bookmarks' && <div className="bookmark-list">
           {!bookmarks.length && <p className="sidebar-empty">Save a section with the bookmark control in the toolbar.</p>}
           {bookmarks.map((bookmark) => <button key={`${bookmark.id}:${bookmark.headingId}`} className={`bookmark-row ${bookmark.id === activeDocument?.id ? 'is-current' : ''}`} type="button" onClick={() => {
-            if (bookmark.id === activeDocument?.id) document.getElementById(bookmark.headingId)?.scrollIntoView({ behavior: 'smooth' });
+            if (bookmark.id === activeDocument?.id) document.getElementById(bookmark.headingId)?.scrollIntoView({ behavior: scrollBehavior() });
             else setNotice(`“${bookmark.headingText}” is saved for ${bookmark.documentName}. Reopen that document to jump to it.`);
           }}><BookMarked size={15} /><span><strong>{bookmark.headingText}</strong><small>{bookmark.documentName}</small></span></button>)}
         </div>}
@@ -948,7 +958,7 @@ export function ReaderApp(): ReactElement {
       </aside>
 
       <section className="reader-workspace" aria-label="Markdown document">
-        {error && <div className="reader-error" role="alert"><strong>Could not open this document.</strong><span>{error}</span><button className="text-button" type="button" onClick={() => setError('')}>Dismiss</button></div>}
+        {error && <div className="reader-error" role="alert"><strong>Something went wrong.</strong><span>{error}</span><button className="text-button" type="button" onClick={() => setError('')}>Dismiss</button></div>}
         {!activeDocument && <div className="welcome-screen">
           <div className="welcome-intro"><span className="welcome-icon"><BookOpen size={22} /></span><h1>Make room to read.</h1><p>Open a local file, bring in a folder, or read a Markdown URL. Your documents stay in this browser.</p></div>
           <div className="welcome-actions">
@@ -969,21 +979,21 @@ export function ReaderApp(): ReactElement {
               <span className="document-kind">{activeDocument.kind === 'remote' ? 'ONLINE' : activeDocument.kind === 'page' ? 'PAGE SNAPSHOT' : 'LOCAL FILE'}</span>
             </div>
             <div className="document-actions-right">
-              <button className={`text-control ${wideMode ? 'is-active' : ''}`} type="button" aria-label={wideMode ? 'Set comfortable reading width' : 'Set wide reading width'} onClick={() => setWideMode((value) => !value)}><AlignJustify size={15} /><span>{wideMode ? 'Comfort' : 'Wide'}</span></button>
+              <button className={`text-control ${wideMode ? 'is-active' : ''}`} type="button" aria-label="Wide reading width" aria-pressed={wideMode} onClick={() => setWideMode((value) => !value)}><AlignJustify size={15} /><span>{wideMode ? 'Comfort' : 'Wide'}</span></button>
               <button className={`text-control focus-mode-control ${focusMode ? 'is-active' : ''}`} type="button" aria-label={focusMode ? 'Leave focus mode' : 'Enter focus mode'} title="Toggle focus mode (F)" onClick={() => setFocusMode((value) => !value)}><Type size={15} /><span>{focusMode ? 'Leave focus' : 'Focus'}</span></button>
               <div className="view-switch" role="group" aria-label="Document view">
-                <button type="button" className={sourceMode === 'rendered' ? 'is-selected' : ''} onClick={() => setSourceMode('rendered')}>Read</button>
-                <button type="button" className={sourceMode === 'source' ? 'is-selected' : ''} onClick={() => setSourceMode('source')}>Source</button>
-                <button type="button" className={sourceMode === 'split' ? 'is-selected' : ''} onClick={() => setSourceMode('split')}>Split</button>
+                <button type="button" aria-pressed={sourceMode === 'rendered'} className={sourceMode === 'rendered' ? 'is-selected' : ''} onClick={() => setSourceMode('rendered')}>Read</button>
+                <button type="button" aria-pressed={sourceMode === 'source'} className={sourceMode === 'source' ? 'is-selected' : ''} onClick={() => setSourceMode('source')}>Source</button>
+                <button type="button" aria-pressed={sourceMode === 'split'} className={sourceMode === 'split' ? 'is-selected' : ''} onClick={() => setSourceMode('split')}>Split</button>
               </div>
-              {activeDocument.kind === 'remote' && <button className="icon-button" type="button" title="Reload document" aria-label="Reload document" onClick={loadRemoteFromInput}><ArrowDownToLine size={16} /></button>}
+              {activeDocument.kind === 'remote' && <button className="icon-button" type="button" title="Reload document" aria-label="Reload document" onClick={() => void fetchRemoteDocument(activeDocument.source, true)}><ArrowDownToLine size={16} /></button>}
               <button className="icon-button" type="button" title="Print or save to PDF" aria-label="Print or save to PDF" onClick={() => window.print()}><Printer size={16} /></button>
               <button className="icon-button fullscreen-toggle" type="button" title="Toggle fullscreen" aria-label="Toggle fullscreen" onClick={toggleFullscreen}><Maximize size={16} /></button>
             </div>
           </div>
           {searchOpen && <div className="document-search" role="search">
             <Search size={16} aria-hidden="true" /><input ref={searchInputRef} type="search" value={searchTerm} onChange={(event) => { setSearchTerm(event.target.value); setSearchIndex(0); }} placeholder="Find in this document" aria-label="Find in this document" onKeyDown={(event) => { if (event.key === 'Enter') setSearchIndex((index) => searchMatches.length ? (index + 1) % searchMatches.length : 0); if (event.key === 'Escape') setSearchOpen(false); }} />
-            <span className="search-count">{searchMatches.length ? `${searchIndex + 1} of ${searchMatches.length}` : searchTerm ? 'No matches' : ''}</span>
+            <span className="search-count" role="status" aria-live="polite">{searchMatches.length ? `${searchIndex + 1} of ${searchMatches.length}` : searchTerm ? 'No matches' : ''}</span>
             <button className="icon-button" type="button" aria-label="Previous match" disabled={!searchMatches.length} onClick={() => setSearchIndex((index) => (index - 1 + searchMatches.length) % searchMatches.length)}><ChevronLeft size={16} /></button>
             <button className="icon-button" type="button" aria-label="Next match" disabled={!searchMatches.length} onClick={() => setSearchIndex((index) => (index + 1) % searchMatches.length)}><ChevronRight size={16} /></button>
             <button className="icon-button" type="button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearchTerm(''); }}><X size={16} /></button>
@@ -996,7 +1006,7 @@ export function ReaderApp(): ReactElement {
               {Object.keys(rendered.metadata).length > 0 && <details className="frontmatter"><summary>Document details</summary><dl>{Object.entries(rendered.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl></details>}
               {rendered.frontmatterError && <p className="reader-error inline-error" role="status">{rendered.frontmatterError}</p>}
               <div dangerouslySetInnerHTML={{ __html: rendered.html }} />
-              <footer className="document-end"><span>End of document</span><span>{rendered.body.trim().split(/\s+/u).filter(Boolean).length.toLocaleString()} words</span></footer>
+              <footer className="document-end"><span>End of document</span><span>{wordCount.toLocaleString()} words</span></footer>
             </article>}
             {(sourceMode === 'source' || sourceMode === 'split') && <pre className="raw-source" aria-label="Read-only Markdown source"><code>{activeDocument.text}</code></pre>}
           </div>}

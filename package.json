@@ -13,9 +13,12 @@
     "zip:firefox": "wxt zip -b firefox",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "pretest:e2e": "npm run build",
+    "pretest:e2e": "npm run build && npm run build:e2e",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:e2e": "MARKDOWN_READER_E2E=1 wxt build -b chrome",
+    "test:e2e:runtime": "npm run build:e2e && playwright test --project=extension-runtime",
+    "postinstall": "wxt prepare"
   },
   "engines": {
     "node": ">=22"
@@ -49,9 +52,6 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.0",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.3",
-    "@testing-library/user-event": "^14.6.10",
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.3.0",

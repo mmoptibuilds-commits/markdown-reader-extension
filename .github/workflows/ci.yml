@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**', 'feat/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, unit, builds, and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` runs the postinstall `wxt prepare`, which generates .wxt/tsconfig.json.
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Typecheck (src, entrypoints, e2e)
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Chromium and Firefox builds
+        run: |
+          npm run build
+          npm run build:firefox
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser-page preview tests
+        run: npx playwright test --project=preview
+
+      - name: Real extension runtime tests
+        run: npm run test:e2e:runtime
+
+      - name: Package extensions
+        run: |
+          npm run zip
+          npm run zip:firefox
+
+      - name: Firefox manifest lint
+        run: npx --yes web-ext@10.8.0 lint --source-dir .output/firefox-mv3
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore

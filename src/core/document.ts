@@ -17,7 +17,7 @@ export interface FrontmatterResult {
   error?: string;
 }
 
-const markdownExtensions = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdown']);
+const markdownExtensions = new Set(['md', 'markdown', 'mdx', 'mkd', 'mkdn', 'mdown', 'mdwn']);
 const markdownMimeTypes = new Set([
   'text/markdown',
   'text/x-markdown',
@@ -25,6 +25,20 @@ const markdownMimeTypes = new Set([
   'application/markdown',
   'application/x-markdown',
 ]);
+
+/** Returns true for a Markdown media type, ignoring parameters and case. */
+export function isMarkdownMimeType(mimeType: string): boolean {
+  return markdownMimeTypes.has(mimeType.split(';', 1)[0]?.trim().toLowerCase() ?? '');
+}
+
+/** Returns true when a pathname (already decoded or not) ends in a Markdown extension. */
+export function hasMarkdownExtension(pathname: string): boolean {
+  let decoded = pathname;
+  try { decoded = decodeURIComponent(pathname); } catch { /* Keep the raw path for malformed escapes. */ }
+  const extension = decoded.slice(decoded.lastIndexOf('.') + 1).toLowerCase();
+  return decoded.lastIndexOf('.') > decoded.lastIndexOf('/') && markdownExtensions.has(extension);
+}
+const htmlMimeTypes = new Set(['text/html', 'application/xhtml+xml']);
 const unsafeObjectKeys = new Set(['__proto__', 'prototype', 'constructor']);
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -35,6 +49,8 @@ export function classifyDocument(
   explicitlyOpened = false,
 ): DocumentFormat {
   const contentType = mimeType?.split(';', 1)[0]?.trim().toLowerCase();
+  // A web page is never Markdown, even when its address ends in .md.
+  if (contentType && htmlMimeTypes.has(contentType)) return 'unsupported';
   if (contentType && markdownMimeTypes.has(contentType)) return 'markdown';
 
   let pathname = source;

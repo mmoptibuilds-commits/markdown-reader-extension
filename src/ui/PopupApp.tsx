@@ -2,9 +2,14 @@ import { browser } from 'wxt/browser';
 import { BookOpen, ExternalLink, FilePlus2, FolderOpen, Globe2, Settings2, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type ChangeEvent, type ReactElement } from 'react';
 import { DEFAULT_SETTINGS, type ReaderSettings } from '../core/settings';
-import { getAutoRenderOrigins, getRecents, loadSettings, putPendingDocument, saveSettings, setAutoRenderOrigins, type RecentDocument } from '../shared/storage';
+import { getAutoRenderOrigins, getRecents, loadSettings, patchSettings, putPendingDocument, setAutoRenderOrigins, type RecentDocument } from '../shared/storage';
 
 const readerUrl = (): string => new URL('/reader.html', window.location.href).href;
+
+/** Stored recents can be damaged; a bad URL should not blank the popup. */
+const hostnameOf = (value: string | undefined): string => {
+  try { return new URL(value ?? '').hostname || 'Online document'; } catch { return 'Online document'; }
+};
 
 export function PopupApp(): ReactElement {
   const [settings, setSettings] = useState<ReaderSettings>({ ...DEFAULT_SETTINGS });
@@ -33,7 +38,7 @@ export function PopupApp(): ReactElement {
     event.preventDefault();
     let url: URL;
     try { url = new URL(remoteUrl); } catch { setMessage('Enter a complete http:// or https:// Markdown URL.'); return; }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) { setMessage('Only public HTTP and HTTPS URLs are supported.'); return; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) { setMessage('Only http:// and https:// addresses without a username or password can be opened.'); return; }
     setBusy(true);
     try {
       const granted = await browser.permissions.request({ origins: [`${url.origin}/*`] });
@@ -103,9 +108,8 @@ export function PopupApp(): ReactElement {
   };
 
   const updateTheme = (theme: ReaderSettings['theme']): void => {
-    const next = { ...settings, theme, customThemeId: null };
-    setSettings(next);
-    void saveSettings(next).catch(() => setMessage('The theme preference could not be saved.'));
+    setSettings((current) => ({ ...current, theme, customThemeId: null }));
+    void patchSettings({ theme, customThemeId: null }).catch(() => setMessage('The theme preference could not be saved.'));
   };
 
   const openRecent = async (item: RecentDocument): Promise<void> => {
@@ -125,8 +129,8 @@ export function PopupApp(): ReactElement {
     <header className="popup-header"><span className="popup-icon"><BookOpen size={17} /></span><div><h1>Markdown Reader</h1><small>Read locally, stay in control</small></div><button type="button" className="popup-icon-button" title="Settings" aria-label="Open settings" onClick={() => void browser.tabs.create({ url: new URL('/options.html', window.location.href).href })}><Settings2 size={17} /></button></header>
     <section className="popup-primary" aria-label="Open a document">
       <label className="popup-action"><FilePlus2 size={17} /><span>Open Markdown file</span><input type="file" accept=".md,.markdown,.mdx,.mkd,.mdown,.txt,text/markdown,text/plain" onChange={(event) => void openSelectedFile(event)} /></label>
-      <button className="popup-action" type="button" onClick={openReader}><FolderOpen size={17} /><span>Open reader &amp; choose folder</span></button>
-      <button className="popup-action" type="button" disabled={busy} onClick={() => void openCurrentPage()}><Globe2 size={17} /><span>Render current page</span></button>
+      <button className="popup-action" type="button" onClick={openReader}><FolderOpen size={17} /><span>Open reader</span></button>
+      <button className="popup-action" type="button" disabled={busy} onClick={() => void openCurrentPage()}><Globe2 size={17} /><span>Read this page</span></button>
     </section>
 
     <form className="popup-url" onSubmit={(event) => void openUrl(event)}>
@@ -136,18 +140,18 @@ export function PopupApp(): ReactElement {
     </form>
 
     {currentOrigin && <section className="popup-autoload">
-      <div className="popup-autoload-copy"><ShieldCheck size={16} /><span><strong>Automatic Markdown URLs</strong><small>{origins.includes(currentOrigin) ? `Enabled for ${currentOrigin}` : `Off for ${currentOrigin}`}</small></span></div>
-      <button type="button" aria-pressed={origins.includes(currentOrigin)} className={`switch ${origins.includes(currentOrigin) ? 'is-on' : ''}`} onClick={() => void toggleAutoRender()} aria-label={origins.includes(currentOrigin) ? 'Disable automatic rendering for this site' : 'Enable automatic rendering for this site'}><span /></button>
+      <div className="popup-autoload-copy"><ShieldCheck size={16} /><span><strong>Open Markdown links automatically</strong><small>{origins.includes(currentOrigin) ? `Enabled for ${currentOrigin}` : `Off for ${currentOrigin}`}</small></span></div>
+      <button type="button" aria-pressed={origins.includes(currentOrigin)} className={`switch ${origins.includes(currentOrigin) ? 'is-on' : ''}`} onClick={() => void toggleAutoRender()} aria-label={`Open Markdown links on ${currentOrigin} automatically`}><span /></button>
     </section>}
 
     <section className="popup-appearance"><label htmlFor="quick-theme">Reading theme</label><select id="quick-theme" value={settings.theme} onChange={(event) => updateTheme(event.target.value as ReaderSettings['theme'])}><option value="paper">Paper</option><option value="snow">Snow</option><option value="sepia">Sepia</option><option value="graphite">Graphite</option><option value="midnight">Midnight</option><option value="system">System</option></select></section>
 
     <section className="popup-recents"><div className="popup-section-title"><span>Recent documents</span>{recents.length > 0 && <span>{recents.length}</span>}</div>
-      {recents.slice(0, 4).map((item) => <button key={item.id} className="popup-recent" type="button" onClick={() => void openRecent(item)}><span className="recent-dot" /><span><strong>{item.name}</strong><small>{item.kind === 'remote' ? new URL(item.url ?? 'https://example.test').hostname : `${item.kind === 'page' ? 'Page snapshot' : 'Local file'} · choose again to reopen`}</small></span><ExternalLink size={13} /></button>)}
+      {recents.slice(0, 4).map((item) => <button key={item.id} className="popup-recent" type="button" onClick={() => void openRecent(item)}><span className="recent-dot" /><span><strong>{item.name}</strong><small>{item.kind === 'remote' ? hostnameOf(item.url) : `${item.kind === 'page' ? 'Page snapshot' : 'Local file'} · choose again to reopen`}</small></span><ExternalLink size={13} /></button>)}
       {!recents.length && <p className="popup-empty">Documents you open appear here. File contents are never saved.</p>}
     </section>
 
     {message && <p className="popup-message" role="status">{message}<button type="button" onClick={() => setMessage('')} aria-label="Dismiss message">×</button></p>}
-    <footer className="popup-footer"><span>Local preferences · no account</span><a href={new URL('/options.html', window.location.href).href} target="_blank" rel="noreferrer">Settings</a></footer>
+    <footer className="popup-footer"><span>Local preferences · no account</span></footer>
   </main>;
 }

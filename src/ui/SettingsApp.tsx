@@ -10,7 +10,7 @@ import {
   type CustomTheme,
   type ReaderSettings,
 } from '../core/settings';
-import { getAutoRenderOrigins, loadSettings, saveSettings, setAutoRenderOrigins } from '../shared/storage';
+import { clearLocalReaderData, getAutoRenderOrigins, loadSettings, saveSettings, setAutoRenderOrigins } from '../shared/storage';
 import { themeStyle } from './theme';
 
 const sections = [
@@ -158,7 +158,7 @@ export function SettingsApp(): ReactElement {
         <section id="files" className="settings-section">
           <div className="section-heading"><h2>File handling</h2><p>Local file contents and folders stay in memory for the reading session.</p></div>
           <div className="setting-note"><span>Use Open file for one document, or Open folder to navigate Markdown files and relative images. Folder access falls back to the browser’s directory input where File System Access is unavailable.</span></div>
-          <div className="setting-note"><span>To read file:// URLs directly, enable “Allow access to file URLs” in your browser’s extension settings. The file picker does not require this setting.</span></div>
+          <div className="setting-note"><span>Local files open with the file picker, drag and drop, or the folder picker. The reader does not open file:// addresses, so automatic opening does not cover local files.</span></div>
         </section>
 
         <section id="online" className="settings-section">
@@ -173,13 +173,17 @@ export function SettingsApp(): ReactElement {
           <div className="section-heading"><h2>Privacy</h2><p>The extension has no server, account, telemetry, or cloud sync.</p></div>
           <div className="setting-note"><span>Only preferences, recent-document metadata, optional reading positions, and bookmarks are stored locally. Local file paths and file contents are not included in history.</span></div>
           <button className="secondary-button" type="button" onClick={async () => {
-            const keys = ['markdownReaderRecents', 'markdownReaderProgress', 'markdownReaderBookmarks', 'markdownReaderAutoRenderOrigins'];
-            await browser.storage.local.remove(keys);
-            await Promise.all(origins.map((origin) => browser.permissions.remove({ origins: [`${origin}/*`] })));
-            setOrigins([]);
-            await browser.runtime.sendMessage({ type: 'markdown-reader:update-auto-render' }).catch(() => undefined);
-            setStatus('Recent history, bookmarks, reading positions, and site grants were cleared. Preferences were kept.');
-          }}>Clear history, bookmarks, and site grants</button>
+            if (!window.confirm('Clear recent documents, bookmarks, reading positions, and automatic-opening sites? Your preferences stay.')) return;
+            try {
+              await clearLocalReaderData();
+              await Promise.all(origins.map((origin) => browser.permissions.remove({ origins: [`${origin}/*`] })));
+              setOrigins([]);
+              await browser.runtime.sendMessage({ type: 'markdown-reader:update-auto-render' });
+              setStatus('Recent documents, bookmarks, reading positions, and automatic-opening sites were cleared. Preferences were kept.');
+            } catch {
+              setStatus('Some data could not be cleared. Try again.');
+            }
+          }}>Clear recents, bookmarks, and site access</button>
         </section>
 
         <section id="shortcuts" className="settings-section">

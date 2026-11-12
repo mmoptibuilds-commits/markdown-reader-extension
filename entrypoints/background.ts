@@ -1,42 +1,39 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { getAutoRenderOrigins } from '../src/shared/storage';
+import { createAutoRenderSync } from '../src/shared/auto-render-sync';
 
 const AUTO_RENDER_ID = 'markdown-reader-auto-render';
-let syncPromise: Promise<void> | undefined;
+// The content script's built path, relative to the extension root.
+const AUTO_RENDER_SCRIPT = 'content-scripts/auto-render.js';
 
-function syncAutoRender(): Promise<void> {
-  if (syncPromise) return syncPromise;
-  syncPromise = (async () => {
-    const registered = await browser.scripting.getRegisteredContentScripts({ ids: [AUTO_RENDER_ID] });
-    if (registered.length) await browser.scripting.unregisterContentScripts({ ids: [AUTO_RENDER_ID] });
+const syncAutoRender = createAutoRenderSync({
+  readOrigins: getAutoRenderOrigins,
+  hasOriginAccess: (pattern) => browser.permissions.contains({ origins: [pattern] }),
+  registry: {
+    isRegistered: async () =>
+      (await browser.scripting.getRegisteredContentScripts({ ids: [AUTO_RENDER_ID] })).length > 0,
+    register: async (matches) => {
+      await browser.scripting.registerContentScripts([{ id: AUTO_RENDER_ID, matches, js: [AUTO_RENDER_SCRIPT], runAt: 'document_start', allFrames: false, persistAcrossSessions: true }]);
+    },
+    update: async (matches) => {
+      await browser.scripting.updateContentScripts([{ id: AUTO_RENDER_ID, matches, js: [AUTO_RENDER_SCRIPT], runAt: 'document_start', allFrames: false, persistAcrossSessions: true }]);
+    },
+    unregister: async () => {
+      await browser.scripting.unregisterContentScripts({ ids: [AUTO_RENDER_ID] });
+    },
+  },
+  reportError: (error) => console.warn('Automatic Markdown opening could not be updated.', error),
+});
 
-    const origins = await getAutoRenderOrigins();
-    const permitted: string[] = [];
-    for (const origin of origins) {
-      try {
-        const parsed = new URL(origin);
-        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) continue;
-        if (await browser.permissions.contains({ origins: [`${origin}/*`] })) permitted.push(`${origin}/*`);
-      } catch { /* Ignore a damaged or stale stored origin. */ }
-    }
-    if (!permitted.length) return;
-    await browser.scripting.registerContentScripts([{
-      id: AUTO_RENDER_ID,
-      matches: permitted,
-      js: ['auto-render.js'],
-      runAt: 'document_start',
-      allFrames: false,
-      persistAcrossSessions: true,
-    }]);
-  })().finally(() => { syncPromise = undefined; });
-  return syncPromise;
-}
+const retrySync = (): void => {
+  void syncAutoRender().catch(() => undefined);
+};
 
 export default defineBackground(() => {
-  browser.runtime.onInstalled.addListener(() => { void syncAutoRender(); });
-  browser.runtime.onStartup.addListener(() => { void syncAutoRender(); });
-  browser.permissions.onRemoved.addListener(() => { void syncAutoRender(); });
+  browser.runtime.onInstalled.addListener(retrySync);
+  browser.runtime.onStartup.addListener(retrySync);
+  browser.permissions.onRemoved.addListener(retrySync);
   browser.runtime.onMessage.addListener((message) => {
     if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'markdown-reader:update-auto-render') {
       return syncAutoRender();

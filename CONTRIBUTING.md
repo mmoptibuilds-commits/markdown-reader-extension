@@ -21,7 +21,7 @@ For local UI work, start `npm run dev` and load WXT's generated Chromium extensi
 - Keep remote scripts and CDNs out of the runtime. Add expensive renderers as local dynamic imports where practical.
 - Preserve strict TypeScript checks. Avoid `any`; make runtime validation explicit for data crossing browser storage or document boundaries.
 - Keep local document contents out of persistent storage by default. Update [SECURITY.md](SECURITY.md) if a change alters data handling or permissions.
-- Add or update unit and browser-preview coverage for behavior changes. Do not describe mocked browser APIs as real extension testing.
+- Add or update unit coverage for behavior changes. Add browser-preview coverage for page behavior, and extension-runtime coverage (`e2e/runtime/`) for anything that depends on the service worker, permissions, or manifest. Do not describe mocked browser APIs as real extension testing.
 - Keep screenshots and feature claims aligned with the actual UI.
 
 ## Claude Code and Codex
