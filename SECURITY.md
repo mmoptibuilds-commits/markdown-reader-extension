@@ -4,7 +4,7 @@
 
 Markdown documents, URLs, frontmatter, code fences, remote servers, linked images, and diagram syntax are untrusted input. The extension aims to display the content as data without granting it execution in the extension page or access to unrelated browsing activity.
 
-The extension has no backend, account, telemetry, analytics, advertising, remote AI call, or cloud synchronization. Rendering libraries and fonts are bundled. Network requests occur only when the user opens a remote Markdown URL, enables automatic opening for a site, or opts into remote images.
+The extension has no backend, account, telemetry, analytics, advertising, remote AI call, or cloud synchronization. Rendering libraries and fonts are bundled. Network requests occur only when the user opens a remote Markdown URL, enables automatic opening for a site, or opts into remote images. Local automatic opening makes no network request.
 
 ## Rendering safeguards
 
@@ -51,7 +51,29 @@ The redirect requires `reader.html` to be web-accessible. Chromium blocks a page
 
 What this exposes: any website can open the reader page, and can ask it to load a Markdown address. The reader fetches only origins the user has granted, and it cannot return document contents to the website that opened it. Opening the reader page from a site also shows the reader UI in that tab. Removing the web-accessible declaration would break automatic opening, so the trade-off is kept and documented here.
 
-`file://` addresses are not covered. The reader does not fetch `file://` URLs, and no content script is registered for them.
+## Local file automatic opening
+
+Local documents are untrusted input and are rendered by the same Markdown pipeline as every other document. The feature needs two independent grants, and both are checked on every use:
+
+1. **The user's opt-in**, `autoOpenLocalFiles` in settings, off by default.
+2. **The browser's file access for the extension.** Chromium: "Allow access to file URLs" (`extension.isAllowedFileSchemeAccess()`). Firefox 153+: "Access local files on your computer" (the internal `fileSchemeAllowed` grant, reported by the same API). The `file:///*` host permission must also be held.
+
+How it works:
+
+1. When the opt-in is on, the background worker adds `file:///*` to the single dynamic content-script registration. It does not check file access first: the browser itself refuses to inject without it, so a later grant or revocation takes effect without a re-sync. Turning the opt-in off removes the pattern.
+2. The content script re-reads the opt-in (the registration can lag a settings change). It redirects only a top-level document whose URL is a local file (no network-share host) with a Markdown extension, shown as a Markdown media type or `text/plain`, and whose body is a browser plain-text view (one `pre`, or empty). HTML, PDF, images, `.txt`, directories, and downloads are never redirected.
+3. The content script sends the page's text to the background worker, which accepts it only when the sender is the top frame of a tab, the sender's browser-reported URL is that same Markdown file, the opt-in is on, and the text is at most 4 MB. The worker stores it in `storage.session` under a random token and returns the token.
+4. The page is replaced (`location.replace`) with `reader.html?url=<file URL>&local=<token>`. The reader replaces its own history entry once (adding `settled=1`) because Chromium blocks reloading an entry created by the web-accessible redirect.
+5. The reader checks the opt-in and file access again, then reads the file with `fetch` (works in Chromium). If that fails (always in Firefox, or if the file was deleted), it uses the token's handoff copy, which must name the same file URL.
+
+Data handling:
+
+- Document text is held only in `storage.session`, which both browsers keep in memory. Entries are capped at six, evicted oldest first on quota errors, removed when their tab closes, and gone after a browser restart. Content scripts cannot read session storage.
+- Persistent recents and bookmarks use a hash of the file URL as the document ID. The path and the text are not stored. The reader URL contains the file path, so the browser's own history records it, as it already records the `file://` address.
+- The reader page is web-accessible to `file:///*` pages as well as HTTP(S) pages. A local HTML file, like a website, could open the reader and ask it for a local Markdown address. The reader loads it only when both grants are on, and the opener cannot read the result. In Chromium the address is a dynamic URL; Firefox's extension UUID is random per install.
+- Relative images in a local file are not resolved: the extension page CSP does not allow `file:` images.
+
+In Firefox before version 153, `isAllowedFileSchemeAccess()` always returns false, so local automatic opening reports "permission required" or "unavailable" and does not run.
 
 ## Required extension permissions
 
@@ -62,13 +84,15 @@ What this exposes: any website can open the reader page, and can ask it to load 
 | `storage` | Store preferences and local reader metadata, including a one-time session handoff. |
 | `clipboardWrite` | Copy code blocks when requested. |
 
-`http://*/*` and `https://*/*` are optional host patterns only. The extension requests a specific origin through the browser permission prompt. It never requests unrestricted access in the background. The production manifest has no `host_permissions`: declaring the automatic-opening content script's patterns as runtime-registered content scripts would have made WXT add them as install-time host permissions, so the script's `matches` is empty and the origin list is supplied at runtime.
+`file:///*` is a required host pattern used only for local automatic opening. It produces no install warning in Chromium (checked with `management.getPermissionWarningsByManifest`), and neither browser uses it until the user grants file access in the browser's own settings.
 
-The `web_accessible_resources` declaration for `reader.html` is described in "Automatic opening" above. It does not add a permission prompt.
+`http://*/*` and `https://*/*` are optional host patterns only. The extension requests a specific origin through the browser permission prompt. It never requests unrestricted access in the background. The production manifest's only `host_permissions` entry is `file:///*`: declaring the automatic-opening content script's patterns as runtime-registered content scripts would have made WXT add them as install-time host permissions, so the script's `matches` is empty and the origin list is supplied at runtime.
+
+The `web_accessible_resources` declaration for `reader.html` is described in "Automatic opening" and "Local file automatic opening" above. It does not add a permission prompt.
 
 The extension page CSP permits local scripts and local WebAssembly for the offline Graphviz renderer. It does not permit remote scripts or runtime code downloads. The limited `unsafe-inline` style source is used for generated and inline presentation styles; it does not enable inline scripts.
 
-Test builds: `MARKDOWN_READER_E2E=1` builds a test variant into `.output-e2e/`. It adds `http://127.0.0.1/*` to `host_permissions` so the runtime suite can run automatic opening without a native permission prompt. Production builds never set that variable, and the release ZIPs are produced only from `.output/`.
+Test builds: `MARKDOWN_READER_E2E=1` builds a test variant into `.output-e2e/`. It adds `http://127.0.0.1/*` to `host_permissions`, beside `file:///*`, so the runtime suite can run automatic opening without a native permission prompt. Production builds never set that variable, and the release ZIPs are produced only from `.output/`.
 
 ## Stored data and deletion
 
@@ -78,6 +102,7 @@ Test builds: `MARKDOWN_READER_E2E=1` builds a test variant into `.output-e2e/`. 
 - Bookmarks store a document identifier and heading metadata.
 - Automatic-opening site grants and their origin list persist until removed.
 - Selected file and current-page text is handed through session storage and removed when the reader consumes it. Folder files are not persisted.
+- Local automatic-opening text stays in session storage until its tab closes or the browser restarts (see "Local file automatic opening").
 
 The Privacy section of Settings can clear recent documents, bookmarks, reading positions, and automatic-opening sites. Resetting preferences is available separately in Advanced settings. Browser uninstall may not immediately erase data already managed by the browser profile; users can also clear extension storage through browser controls.
 
@@ -90,7 +115,8 @@ These are known and not yet fixed:
 - Custom CSS: `image-set()` and `src()` are now rejected. Other CSS escape forms have not been exhaustively tested.
 - SVG output is filtered with literal patterns for `url(`. CSS escape sequences such as `u\72l(` are not decoded before that check. Browser effect not verified; treat as a hardening item.
 - YAML frontmatter aliases are bounded by count and depth, but shared anchors are not memoized, so a crafted document could still cost more time than its size suggests.
-- Firefox runtime behavior of the permission, redirect, and web-accessible paths has not been tested in Firefox.
+- Firefox runtime behavior of the remote permission, redirect, and web-accessible paths has not been tested in Firefox. The local-file path has been (Firefox 160).
+- Reloading the reader after a website was opened automatically shows a "blocked" page in Chromium (`use_dynamic_url` entry created by a web redirect). Found 2026-11-13 while testing local files, which work around it with the `settled` replace. Not fixed for remote documents.
 
 ## Reporting a security issue
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Automatic opening of local Markdown files (`file://`). Opt in under Settings › File handling; the browser must also grant file access (Chromium: **Allow access to file URLs**; Firefox 153+: **Access local files on your computer**). Settings shows the current state and, in Chromium browsers, links to the extension's details page. Only `.md`, `.markdown`, `.mdx`, `.mkd`, `.mkdn`, `.mdown`, and `.mdwn` files that the browser displays as text are redirected.
+- `npm run test:firefox`: a real-Firefox check of local automatic opening over WebDriver BiDi, with no new dependency.
+
 ### Fixed
 
 - Automatic opening did not work in Chromium: a web page could not navigate to `reader.html` because the page was not web-accessible. It is now declared web-accessible (with a dynamic URL in Chromium), and an end-to-end test in an installed Chrome build covers the redirect.
@@ -38,8 +43,9 @@
 
 ### Known gaps
 
-- Automatic opening does not cover `file://` addresses.
-- Firefox behavior is checked by build, packaging, and `web-ext lint` only.
+- Reloading the reader after a website opened it automatically shows a "blocked" page in Chromium (found while testing local files; not fixed here).
+- In Firefox, local files over 4 MB do not open automatically.
+- Firefox runtime is checked for local automatic opening only; other Firefox behavior is checked by build, packaging, and `web-ext lint`.
 - Native permission prompts and the file picker dialog are not automated.
 - Single-key shortcuts cannot be turned off yet.
 
