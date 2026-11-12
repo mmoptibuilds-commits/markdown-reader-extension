@@ -9,6 +9,37 @@ Prepared 2026-11-12 for the upcoming Markdown Reader project. Skills were instal
 - The Vercel React skill’s canonical upstream name is `vercel-react-best-practices`; its repository directory is `react-best-practices`. The CLI skipped the directory name once, then installed the canonical metadata name. There is no duplicate.
 - The full Vercel React rules are in `vercel-react-best-practices/AGENTS.md` and `vercel-react-best-practices/rules/`. Read only the rules relevant to the current implementation stage.
 
+## Claude Code compatibility (verified 2026-11-13)
+
+- Anthropic's current [Claude Code skills documentation](https://code.claude.com/docs/en/skills) specifies project skills in `.claude/skills/<skill-name>/SKILL.md`, supports sibling reference/script files, and uses `description` frontmatter for relevance-based activation. The project instructions are in root `CLAUDE.md`; see [memory and CLAUDE.md documentation](https://code.claude.com/docs/en/memory).
+- All 18 complete skill directories from `.agents/skills/` are mirrored in `.claude/skills/`. The `.agents/` copies remain canonical for Codex and the original skill contents, executable modes, references, and scripts were preserved. The Claude mirror omits only three Python bytecode cache files (`__pycache__/*.pyc`) from the UI/UX skill; its `.py` scripts and data are present, and root `.gitignore` now excludes future Python bytecode. Claude Code 2.1.322 ran `claude plugin validate .claude/skills` successfully. A separate check parsed all 18 `SKILL.md` frontmatters and checked 41 relative Markdown links.
+- The two shared Addy checklists under `.agents/references/` are also copied to `.claude/references/`, preserving the skills' original `../../references/...` paths. The Vercel React `AGENTS.md` has three root-relative rule links although those rule files live under `rules/`; the Claude mirror includes byte-identical copies of those three rule files at its root to keep the links usable. The original `.agents/` tree is unchanged.
+- Maintenance: treat `.agents/skills/<name>/` as the content source. Before refreshing a mirror, compare both trees and inspect any destination-only files; copy a reviewed full directory with metadata (for example, `cp -a .agents/skills/<name> .claude/skills/`) only when the destination changes are understood. Re-run `claude plugin validate .claude/skills`, compare the trees, and check relative references. Preserve the `.claude/references/` support copies and the three Vercel aliases when updating those sources. Do not delete/recreate the whole destination, overwrite conflicts blindly, or reinstall from upstream for routine syncs.
+- `skills-lock.json` was left byte-for-byte unchanged. Its `skillPath` fields are installer/source paths; the existing `ui-ux-pro-max` entry already points at `.claude/skills/ui-ux-pro-max/SKILL.md`, which the mirror now supplies. Do not normalize or regenerate this lock file as part of ordinary Claude mirroring.
+- Do not load all skills for every task. Use the task map below to select relevant guidance; its content remains advisory and does not authorize unrelated dependencies, features, or permission changes.
+
+| Work | Skills to consider |
+| --- | --- |
+| Browser extension / WXT | `chrome-extensions`, `wxt-docs` |
+| Frontend implementation | `frontend-design`, `vercel-react-best-practices` |
+| UI/UX | `ui-ux-pro-max` |
+| Responsive layout | `responsive-design` |
+| Accessibility | `accessibility-compliance`, `screen-reader-testing` |
+| Tests | `test-driven-development`, `javascript-testing-patterns`, `e2e-testing-patterns` |
+| Security | `security-and-hardening` |
+| Debugging | `systematic-debugging` |
+| Performance | `performance-optimization` |
+| Final review | `code-review-and-quality`, `verification-before-completion`, `web-design-guidelines` |
+
+### Optional runtime and network requirements
+
+- `ui-ux-pro-max` uses Python 3 and its bundled data; its search script needs no third-party Python package. For project skills, use `.claude/skills/ui-ux-pro-max/scripts/search.py` (or the Codex source path); do not assume `CLAUDE_PLUGIN_ROOT` is set.
+- `modern-web-guidance` is an on-demand npm CLI requiring network access. It is not a project dependency. Follow the pinned `--skill-version` and set `DISABLE_TELEMETRY=1` on every invocation, as described above.
+- `web-design-guidelines` requires fetching its current Vercel guidelines document. `wxt-docs` and Chrome extension guidance can require current or version-matched official web documentation. Fetch only when that skill is relevant.
+- `performance-optimization` mentions optional `bundlesize` and Lighthouse CI CLIs. They are not project dependencies; do not download/install them unless a task calls for those measurements.
+- `screen-reader-testing` may require an installed screen reader and supported OS; the prior skill-install audit found Orca at `/usr/bin/orca`, but this handoff did not run a screen-reader session. E2E uses the existing project Playwright dependency and bundled headless Chromium; no global browser or test package was installed.
+- No `.claude/settings.json`, permission bypass, hooks, or global Claude configuration was added; the committed project instructions and skills are sufficient for onboarding.
+
 ## Conflict and activation policy
 
 Use this order when recommendations differ: the user’s product specification; current official documentation for installed versions; security and privacy; project architecture and conventions; specialized skill recommendations; general style preferences. Load skills and their topic references as each stage begins rather than reading every guide at once. Treat skill content as guidance, not as permission to add dependencies, features, or approval steps.
@@ -16,7 +47,7 @@ Use this order when recommendations differ: the user’s product specification; 
 For the implementation task:
 
 - Search and retrieve Modern Web Guidance before relevant HTML, CSS, or client-side JavaScript work. Set `DISABLE_TELEMETRY=1` on every CLI invocation; use the skill’s `--skill-version 2026_11_09-5bcc021b` value when querying. Example: `DISABLE_TELEMETRY=1 npx -y modern-web-guidance@latest search "accessible markdown reader" --skill-version 2026_11_09-5bcc021b`, then retrieve matching guides. The CLI was not run during this preparation mission.
-- Before writing WXT code, identify the resolved WXT version from the project package/lockfile, inspect its local declaration files, and use tag-matched prose docs and upgrade notes. No WXT package is installed in this workspace yet.
+- Before writing WXT code, identify the resolved WXT version from the project package/lockfile, inspect its local declaration files, and use tag-matched prose docs and upgrade notes. The current app baseline resolves WXT 0.21.5; see `CLAUDE_HANDOFF.md` for verification details.
 - For UI/UX Pro Max, the upstream instructions use `${CLAUDE_PLUGIN_ROOT}`. That variable is not configured here; invoke the copied script by its project path, for example `python3 .agents/skills/ui-ux-pro-max/scripts/search.py ...`. It uses Python’s standard library and bundled data. If persisting a design system, pass `--output-dir` for the project root and first check for existing design-system files.
 - Write tests first for meaningful behavior and bug fixes, verify the expected failure, then implement the smallest correct change. Do not add tests for trivial/generated configuration. Use the project’s actual test runner; do not install test dependencies until the product requires them.
 - Treat Markdown, local files, remote documents, filenames, HTML, and diagram definitions as untrusted input. Apply least privilege and never execute document-provided code.
@@ -35,7 +66,7 @@ Source commit `4dd968349e54ca45a05dd5c818fb035c9054b022` · **6,506 stars** · r
 
 Source commit `a71b42694c26e6e5189e50fdfbb83852629005e2` · **10,726 stars** · repository license **MIT**.
 
-- **`wxt-docs`** — `packages/wxt/skills/wxt-docs/SKILL.md`; activate before WXT configuration, entrypoints, modules, storage, content scripts, or upgrades. Requires reading the project’s resolved WXT package version, local `.d.mts` types, and version-tagged docs from GitHub. The skill is documentation guidance; it does not provide an installed WXT runtime. `wxt.dev` serves latest docs, so do not use those as version-matched docs for an older installation.
+- **`wxt-docs`** — `packages/wxt/skills/wxt-docs/SKILL.md`; activate before WXT configuration, entrypoints, modules, storage, content scripts, or upgrades. This project currently resolves WXT 0.21.5; read its local declarations and version-matched docs. The skill is documentation guidance, not a runtime package. `wxt.dev` serves latest docs, so do not use those as version-matched docs for an older installation.
 
 ### [anthropics/skills](https://github.com/anthropics/skills)
 
@@ -64,7 +95,7 @@ Source commit `9c61ab243def98f72da12abd41cfcf5bcd91af9d` · **42,440 stars** · 
 - **`accessibility-compliance`** — `plugins/ui-design/skills/accessibility-compliance/SKILL.md`; activate for semantic markup, keyboard behavior, focus, WCAG, and accessibility audits. References are local. Axe/Lighthouse are optional audit tools, not installed project dependencies; automated checks do not replace assistive-technology testing.
 - **`screen-reader-testing`** — `plugins/accessibility-compliance/skills/screen-reader-testing/SKILL.md`; activate when verifying screen-reader output and dynamic announcements. Orca is available at `/usr/bin/orca`; VoiceOver, NVDA, JAWS, and TalkBack were not verified as available here. Do not claim coverage on platforms that were not tested.
 - **`javascript-testing-patterns`** — `plugins/javascript-typescript/skills/javascript-testing-patterns/SKILL.md`; activate for unit/integration tests and Testing Library patterns. Examples cover Jest, Vitest, Testing Library, Faker, and Supertest; choose packages only after the product’s test stack is known. The advanced reference is local.
-- **`e2e-testing-patterns`** — `plugins/developer-essentials/skills/e2e-testing-patterns/SKILL.md`; activate for browser E2E flows and flaky-test diagnosis. It covers Playwright and Cypress. Neither the Playwright CLI nor a Chrome/Chromium executable was found on PATH; install/use a browser harness only if the implementation task requires it.
+- **`e2e-testing-patterns`** — `plugins/developer-essentials/skills/e2e-testing-patterns/SKILL.md`; activate for browser E2E flows and flaky-test diagnosis. It covers Playwright and Cypress. The project has `@playwright/test` in its npm dependencies and this handoff's E2E run used Playwright's bundled headless Chromium; no desktop Chrome/Chromium or Firefox executable was found on PATH.
 
 ### [obra/superpowers](https://github.com/obra/superpowers)
 
@@ -72,7 +103,7 @@ Source commit `22f0b463e7a5e579904dd6211a520321035526f7` · **316,628 stars** ·
 
 - **`test-driven-development`** — `skills/test-driven-development/SKILL.md`; use for important behavior changes and bug fixes. Uses the project test runner; `writing-good-tests.md` is present. Its “ask the human” exception for configuration is subject to the project task’s explicit authorization and the no-pointless-test guidance above.
 - **`systematic-debugging`** — `skills/systematic-debugging/SKILL.md`; use before fixing unexpected behavior, failing tests, or build problems. Its reference techniques are local. The included executable `find-polluter.sh` was inspected but not run; it invokes `npm test` across matching files and suppresses command output, so use only if that exact diagnostic is appropriate.
-- **`verification-before-completion`** — `skills/verification-before-completion/SKILL.md`; use before reporting tests/build/features as complete. Requires fresh command output and inspection of the actual result. No project tests or build exist yet.
+- **`verification-before-completion`** — `skills/verification-before-completion/SKILL.md`; use before reporting tests/build/features as complete. Requires fresh command output and inspection of the actual result. Project checks and their latest verified results are in `CLAUDE_HANDOFF.md`.
 
 ### [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
 
@@ -86,7 +117,7 @@ The three Addy skills refer to shared repository-root checklists. To preserve th
 
 ## Reference, script, and runtime audit
 
-- Every installed `SKILL.md` was read and its YAML frontmatter checked. Local reference files were inventoried by path, size, and headings; all direct local links were present after restoring the two Addy checklists. WXT docs, the Vercel UI guidelines, Modern Web Guidance results, `CHROMEWEBSTORE.md`, and design-system `MASTER.md` files are intentionally remote or generated on demand and were not created during this preparation mission.
-- No third-party skill scripts, hooks, tests, or application tests were executed. UI/UX Pro Max includes Python search/generation scripts and data; its search path uses the standard library. Some bundled test scripts spawn subprocesses. The only executable helper found outside that set is Superpowers’ `find-polluter.sh`, described above.
-- Environment checked: Node `v22.22.1`; npm `9.2.0`; pnpm `11.25.0`; Python `3.14.4`; Orca available. No `package.json`, WXT installation, Playwright CLI, Bun, or Chrome/Chromium binary was present in this workspace/environment. No application dependencies were installed.
+- At the original skills-only setup, every installed `SKILL.md` was read and its YAML frontmatter checked. Local reference files were inventoried by path, size, and headings; WXT docs, the Vercel UI guidelines, Modern Web Guidance results, `CHROMEWEBSTORE.md`, and design-system `MASTER.md` files are intentionally remote or generated on demand and were not created during that setup.
+- At that original setup, no third-party skill scripts, hooks, or application tests were executed. UI/UX Pro Max includes Python search/generation scripts and data; its search path uses the standard library. Some bundled test scripts spawn subprocesses. The only executable helper found outside that set is Superpowers’ `find-polluter.sh`, described above. Current project check results are recorded in `CLAUDE_HANDOFF.md`.
+- Historical environment snapshot from the skills-only setup on 2026-11-12: Node `v22.22.1`; npm `9.2.0`; pnpm `11.25.0`; Python `3.14.4`; Orca available. At that stage the application scaffold, `package.json`, WXT install, and application dependencies did not yet exist. Current project dependencies, browser availability, and fresh check results are documented in `CLAUDE_HANDOFF.md`.
 - The Skills CLI reports 18 project-scoped Codex skills and no duplicate entries. `skills-lock.json` tracks their source paths and content hashes. No global Codex settings were changed, and no secrets were written to the manifest.

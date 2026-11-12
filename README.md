@@ -114,3 +114,5 @@ Inside the reader, Ctrl/Command+F searches, Ctrl/Command+K opens the command pal
 - [Testing and QA](TESTING.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
+- [Claude Code handoff](CLAUDE_HANDOFF.md)
+- [Installed engineering skills and mirror maintenance](.agents/skills/skills-manifest.md)
