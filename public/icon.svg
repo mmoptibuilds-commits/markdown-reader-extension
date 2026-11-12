@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Markdown Reader icon">
+  <rect width="128" height="128" rx="28" fill="#193c2e"/>
+  <path d="M27 37.5c13-4.3 25.1-2.7 37 4.8v52.2c-12-7.4-24.3-9-37-4.7V37.5Z" fill="#f8f7f0"/>
+  <path d="M101 37.5c-13-4.3-25.1-2.7-37 4.8v52.2c12-7.4 24.3-9 37-4.7V37.5Z" fill="#e4ecdf"/>
+  <path d="M64 42v54" fill="none" stroke="#75ad85" stroke-linecap="round" stroke-width="4"/>
+  <path d="M35 51c7.5-1.6 14.4-.6 21 2.9M35 64c7.5-1.6 14.4-.6 21 2.9M35 77c7.5-1.6 14.4-.6 21 2.9M72 53.9c6.6-3.5 13.5-4.5 21-2.9M72 66.9c6.6-3.5 13.5-4.5 21-2.9M72 79.9c6.6-3.5 13.5-4.5 21-2.9" fill="none" stroke="#73947c" stroke-linecap="round" stroke-width="3"/>
+</svg>

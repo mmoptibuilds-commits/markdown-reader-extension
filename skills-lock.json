@@ -1,0 +1,119 @@
+{
+  "version": 2,
+  "skills": {
+    "accessibility-compliance": {
+      "source": "wshobson/agents",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/ui-design/skills/accessibility-compliance/SKILL.md",
+      "computedHash": "c8ad5b5f83e413bb69e7a7ad251662c91e27cdf7db7d104df68b11aab6d3c534"
+    },
+    "chrome-extensions": {
+      "source": "GoogleChrome/modern-web-guidance",
+      "sourceType": "github",
+      "skillPath": "skills/chrome-extensions/SKILL.md",
+      "computedHash": "802ef1e0135ebd69e0eec533914754ba8ed0f080af86e55400de6e7fb22e6bae"
+    },
+    "code-review-and-quality": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-review-and-quality/SKILL.md",
+      "computedHash": "e03fe4f99d65c959547e3e5d65229fe56a8cdf19144b747d78ebebcfffb76346"
+    },
+    "e2e-testing-patterns": {
+      "source": "wshobson/agents",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/developer-essentials/skills/e2e-testing-patterns/SKILL.md",
+      "computedHash": "4cbd1f5464140eceee76fb75df11e3a30a4d6b3386bfc51af062688aaa425d92"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "83485963700bcf11d5bf78118facb301676b69d918fee2e45a95e7f1a2840f6c"
+    },
+    "javascript-testing-patterns": {
+      "source": "wshobson/agents",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/javascript-typescript/skills/javascript-testing-patterns/SKILL.md",
+      "computedHash": "df9a91c014dd91ee65d7008cd23929cbe4b9e2087d67cdb31ebd0ab3831134af"
+    },
+    "modern-web-guidance": {
+      "source": "GoogleChrome/modern-web-guidance",
+      "sourceType": "github",
+      "skillPath": "skills/modern-web-guidance/SKILL.md",
+      "computedHash": "9e69ce00dc314b64f6664031b70295ea46c7de93ac682c624808df6e48e08b66"
+    },
+    "performance-optimization": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/performance-optimization/SKILL.md",
+      "computedHash": "cfa0c39804554198a33e3beb2b0f920a1b468bb2e066822e1d08f4abeda3db33"
+    },
+    "responsive-design": {
+      "source": "wshobson/agents",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/ui-design/skills/responsive-design/SKILL.md",
+      "computedHash": "3ff2c1acd7067b5fbd30dc370364054f7d470d26e288cf3d454fed457478cdc0"
+    },
+    "screen-reader-testing": {
+      "source": "wshobson/agents",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/accessibility-compliance/skills/screen-reader-testing/SKILL.md",
+      "computedHash": "79c2a7b6ffc5ece8d550b9406f6817cf69d17dfb14fe4b88179ef740643d4c60"
+    },
+    "security-and-hardening": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/security-and-hardening/SKILL.md",
+      "computedHash": "4970681073e6138c4cec8eca31546187f47723a61a7f1204710ae86d9f704517"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/systematic-debugging/SKILL.md",
+      "computedHash": "79ff0583175346e39431b0dc713b223edd1bd7a7ea2b6c8b78b2fb9a3fed6782"
+    },
+    "test-driven-development": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/test-driven-development/SKILL.md",
+      "computedHash": "2782702b2cf69ace085ed30d067b6f8bfd2d777ad51770fc5bdae9cb5c1b5c04"
+    },
+    "ui-ux-pro-max": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/ui-ux-pro-max/SKILL.md",
+      "computedHash": "ff6863fc7c1be035b294703b2e7c90b2197548985ca4cb98f58740a7e84dc0cc"
+    },
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-best-practices/SKILL.md",
+      "computedHash": "7991ed4fbecdac23f47c1a40c243e00a212a9e7f3604db93959b3ae11dffe299"
+    },
+    "verification-before-completion": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/verification-before-completion/SKILL.md",
+      "computedHash": "09b0e3a4689c1c38a3b8fc6ef57a1d4165aa33c0013d546dbde9dd348941a319"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "4f68ae07187fb0d1fb78c88b503d089da4cf5a9d9625d1f2e425b1590bf96d92"
+    },
+    "wxt-docs": {
+      "source": "wxt-dev/wxt",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "packages/wxt/skills/wxt-docs/SKILL.md",
+      "computedHash": "b36de07aa24bf426455f56d3f51758dfd7b9f7da9c1d135073cac1cad0bd6b54"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/core/markdown.test.ts"
+        ],
+        "createdAt": "2026-11-12T16:41:25.455Z",
+        "reason": "Agent: security regression test deliberately injects malformed image markup; no broken product image is shipped"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/ui/reader.css"
+        ],
+        "createdAt": "2026-11-12T18:10:50.750Z",
+        "reason": "Agent: intentional semantic blockquote marker; the 2px left rule styles quoted text, not a card side-tab accent."
+      }
+    ]
+  }
+}

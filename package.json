@@ -1,0 +1,63 @@
+{
+  "name": "markdown-reader-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A local-first, privacy-focused Markdown reading extension.",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build -b chrome",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip -b chrome",
+    "zip:firefox": "wxt zip -b firefox",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pretest:e2e": "npm run build",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@viz-js/viz": "^3.31.0",
+    "@wxt-dev/module-react": "^1.2.2",
+    "dompurify": "^3.4.17",
+    "highlight.js": "^11.12.0",
+    "katex": "^0.19.1",
+    "lucide-react": "^1.72.0",
+    "markdown-it": "^15.0.3",
+    "markdown-it-abbr": "^2.0.0",
+    "markdown-it-container": "^4.0.0",
+    "markdown-it-deflist": "^4.0.0",
+    "markdown-it-emoji": "^3.1.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-github-alerts": "^1.0.1",
+    "markdown-it-ins": "^4.0.0",
+    "markdown-it-mark": "^4.0.0",
+    "markdown-it-multimd-table": "^4.2.3",
+    "markdown-it-sub": "^2.0.0",
+    "markdown-it-sup": "^2.0.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "mermaid": "^12.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "wxt": "^0.21.5",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.10",
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^27.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
