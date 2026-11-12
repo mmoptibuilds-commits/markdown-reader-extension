@@ -14,8 +14,8 @@ Current capabilities include CommonMark/GFM and extended Markdown, local math an
 - `src/core/` — browser-independent document classification, Markdown rendering, settings validation, and their unit tests.
 - `src/shared/` — browser storage adapter and metadata types.
 - `src/ui/` — React applications, theme tokens, and responsive component styles.
-- `public/` — static extension assets and the automatic-render content script.
-- `e2e/` — Playwright browser-page preview tests; extension APIs are mocked.
+- `public/` — static extension assets (icons). The automatic-opening content script is `entrypoints/auto-render.content.ts`, registered at runtime by the background worker.
+- `e2e/preview/` — Playwright tests of the built pages with mocked extension APIs. `e2e/runtime/` — Playwright tests that load the unpacked test build (`.output-e2e/`) into a real Chromium profile.
 - `design-system/` — approved visual direction and tokens. Preserve `design-system/fieldnote-markdown-reader/MASTER.md`.
 - `.agents/skills/` — canonical installed engineering skill sources for Codex.
 - `.claude/skills/` — complete project-level mirrors Claude Code discovers; see `.agents/skills/skills-manifest.md` before changing either copy.
@@ -34,13 +34,14 @@ Use Node.js 22 or newer and npm. `npm ci` installs the exact lockfile dependency
 | `npm run dev:firefox` | Start the WXT Firefox development build. |
 | `npm run typecheck` | Run strict TypeScript checks without emitting files. |
 | `npm test` | Run the Vitest unit suite. |
-| `npm run test:e2e` | Build the Chrome bundle, then run Playwright against its local preview with mocked extension APIs. This is not a native extension installation test. |
+| `npm run test:e2e` | Build the production and test bundles, then run the `preview` project (mocked APIs) and the `extension-runtime` project (unpacked extension). Native permission prompts are not automated. See TESTING.md. |
+| `npm run test:e2e:runtime` | Build the test bundle, then run only the extension-runtime project. |
 | `npm run build` | Build the production Chromium extension under `.output/chrome-mv3/`. |
 | `npm run build:firefox` | Build the production Firefox extension under `.output/firefox-mv3/`. |
 | `npm run zip` | Build and package the Chromium extension under `.output/`. |
 | `npm run zip:firefox` | Build and package the Firefox extension under `.output/`. |
 
-Do not commit `.output/`, `node_modules/`, Playwright reports/results, or other generated build artifacts.
+Do not commit `.output/`, `.output-e2e/`, `node_modules/`, Playwright reports/results, or other generated build artifacts.
 
 ## Engineering rules
 

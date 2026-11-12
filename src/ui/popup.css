@@ -36,7 +36,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .popup-autoload-copy > span { display: flex; flex-direction: column; gap: 3px; }
 .popup-autoload-copy strong { color: var(--p-fg); font-size: 10px; font-weight: 650; }
 .popup-autoload-copy small { color: var(--p-muted); font-size: 9px; }
-.switch { width: 32px; height: 19px; padding: 2px; border: 1px solid var(--p-border); border-radius: 11px; background: color-mix(in srgb, var(--p-muted) 18%, var(--p-bg)); }
+.switch { width: 32px; height: 24px; padding: 2px; border: 1px solid var(--p-border); border-radius: 11px; background: color-mix(in srgb, var(--p-muted) 18%, var(--p-bg)); }
 .switch span { display: block; width: 13px; height: 13px; border-radius: 50%; background: var(--p-muted); transition: transform 150ms ease, background 150ms ease; }
 .switch.is-on { border-color: var(--p-accent); background: var(--p-accent); }
 .switch.is-on span { transform: translateX(12px); background: var(--p-bg); }
@@ -58,3 +58,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .popup-footer { display: flex; justify-content: space-between; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--p-border); color: var(--p-muted); font-size: 9px; }
 .popup-footer a { color: var(--p-accent); font-weight: 600; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+
+/* Focus lands on the visually hidden file input; show the focus ring on its visible row. */
+.popup-action:focus-within { outline: 3px solid #528469; outline-offset: 2px; }
+/* WCAG 2.2 target size: keep dismiss controls at 24px or larger. */
+.popup-message button { min-width: 24px; min-height: 24px; }

@@ -2,6 +2,7 @@ import { browser } from 'wxt/browser';
 import {
   loadSettings as loadCoreSettings,
   saveSettings as saveCoreSettings,
+  updateSettings,
   type ReaderSettings,
   type SettingsStorage,
 } from '../core/settings';
@@ -44,6 +45,8 @@ const settingsStorage: SettingsStorage = {
 
 export const loadSettings = (): Promise<ReaderSettings> => loadCoreSettings(settingsStorage);
 export const saveSettings = (settings: unknown): Promise<ReaderSettings> => saveCoreSettings(settingsStorage, settings);
+/** Saves only the given fields, merged into whatever is stored at write time. */
+export const patchSettings = (patch: Partial<ReaderSettings>): Promise<ReaderSettings> => updateSettings(settingsStorage, patch);
 
 export async function getRecents(): Promise<RecentDocument[]> {
   const value: unknown = (await browser.storage.local.get(RECENTS_KEY))[RECENTS_KEY];

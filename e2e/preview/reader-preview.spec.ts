@@ -3,6 +3,8 @@ import path from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import { chromium, type Browser, type BrowserContext, type Page, test, expect } from '@playwright/test';
 
+const screenshotDir = path.resolve('test-results', 'screenshots');
+
 let browser: Browser;
 let context: BrowserContext;
 let page: Page;
@@ -10,8 +12,9 @@ let page: Page;
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
-  browser = await chromium.launch({ headless: true });
-  await mkdir(path.resolve('screenshots'), { recursive: true });
+  const chromePath = process.env.MARKDOWN_READER_CHROME_PATH;
+  browser = await chromium.launch({ headless: true, ...(chromePath ? { executablePath: chromePath } : {}) });
+  await mkdir(screenshotDir, { recursive: true });
   context = await browser.newContext({
     viewport: { width: 1366, height: 900 },
   });
@@ -100,7 +103,7 @@ test('opens a local Markdown file and uses reading controls', async () => {
   await expect.poll(() => page.locator('[data-diagram="mermaid"] svg rect.basic').first().evaluate((rect) => rect.getBoundingClientRect().width)).toBeGreaterThan(0);
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.screenshot({
-    path: path.resolve('screenshots/reader-desktop.png'),
+    path: path.resolve(screenshotDir, 'reader-desktop.png'),
     fullPage: true,
     style: '.reader-bottom-controls { display: none !important; }',
   });
@@ -148,7 +151,7 @@ test('keeps the reader usable on a narrow viewport and passes axe checks', async
   });
   await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Table of contents' })).toBeHidden();
-  await page.screenshot({ path: path.resolve('screenshots/reader-mobile.png'), fullPage: true });
+  await page.screenshot({ path: path.resolve(screenshotDir, 'reader-mobile.png'), fullPage: true });
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflow).toBe(false);
@@ -165,7 +168,7 @@ test('keeps the reader usable on a narrow viewport and passes axe checks', async
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(hasOverflow, `${viewport.width} × ${viewport.height} should not overflow horizontally`).toBe(false);
-    await page.screenshot({ path: path.resolve(`screenshots/${viewport.screenshot}`), fullPage: true });
+    await page.screenshot({ path: path.resolve(screenshotDir, `${viewport.screenshot}`), fullPage: true });
   }
 });
 
@@ -202,13 +205,13 @@ test('settings save and persist a local theme preference', async () => {
   await expect(settingsPage.getByRole('heading', { name: 'Make reading yours.' })).toBeVisible();
   await settingsPage.locator('#appearance select').selectOption('sepia');
   await expect(settingsPage.locator('.settings-status')).toContainText('Saved on this device.');
-  await settingsPage.screenshot({ path: path.resolve('screenshots/settings-desktop.png'), fullPage: true });
+  await settingsPage.screenshot({ path: path.resolve(screenshotDir, 'settings-desktop.png'), fullPage: true });
   await settingsPage.setViewportSize({ width: 390, height: 844 });
   const settingsOverflow = await settingsPage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(settingsOverflow).toBe(false);
   const settingsAccessibility = await new AxeBuilder({ page: settingsPage }).analyze();
   expect(settingsAccessibility.violations.map(({ id, impact, nodes }) => ({ id, impact, targets: nodes.map((node) => node.target.join(' ')) }))).toEqual([]);
-  await settingsPage.screenshot({ path: path.resolve('screenshots/settings-mobile.png'), fullPage: true });
+  await settingsPage.screenshot({ path: path.resolve(screenshotDir, 'settings-mobile.png'), fullPage: true });
   await settingsPage.reload();
   await expect(settingsPage.locator('#appearance select')).toHaveValue('sepia');
   await settingsPage.close();
@@ -221,7 +224,7 @@ test('popup requests a single site and opens the reader URL', async () => {
   await expect(popupPage.getByText('Markdown Reader', { exact: true })).toBeVisible();
   const popupAccessibility = await new AxeBuilder({ page: popupPage }).analyze();
   expect(popupAccessibility.violations.map(({ id, impact, nodes }) => ({ id, impact, targets: nodes.map((node) => node.target.join(' ')) }))).toEqual([]);
-  await popupPage.screenshot({ path: path.resolve('screenshots/popup.png'), fullPage: true });
+  await popupPage.screenshot({ path: path.resolve(screenshotDir, 'popup.png'), fullPage: true });
 
   await popupPage.getByLabel('Open an online Markdown URL').fill('https://example.test/README.md');
   await popupPage.getByRole('button', { name: 'Open URL' }).click();

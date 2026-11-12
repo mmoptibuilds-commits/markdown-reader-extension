@@ -98,6 +98,9 @@ export function scopeCustomCss(source: string): string {
   const css = source.trim();
   if (!css || css.length > 16_384) return '';
   if (/[\\@]|\/\*|\*\/|url\s*\(|expression\s*\(|javascript\s*:|data\s*:/iu.test(css)) return '';
+  // image(), image-set(), src() and cross-fade() can fetch resources without url(), and a
+  // quoted first argument to any function is how they carry a URL.
+  if (/(?:^|[^\w-])(?:-webkit-)?(?:image|image-set|src|cross-fade)\s*\(/iu.test(css) || /\(\s*["']/u.test(css)) return '';
 
   const rules = css.match(/[^{}]+\{[^{}]*\}/gu);
   if (!rules || rules.join('').replace(/\s/gu, '') !== css.replace(/\s/gu, '')) return '';
@@ -177,6 +180,12 @@ export async function saveSettings(storage: SettingsStorage, settings: unknown):
   const normalized = normalizeSettings(settings);
   await storage.set({ [SETTINGS_STORAGE_KEY]: normalized });
   return normalized;
+}
+
+/** Applies a partial change on top of the stored settings, so concurrent pages do not overwrite each other. */
+export async function updateSettings(storage: SettingsStorage, patch: Partial<ReaderSettings>): Promise<ReaderSettings> {
+  const current = await loadSettings(storage);
+  return saveSettings(storage, { ...current, ...patch });
 }
 
 export function exportSettings(settings: unknown): string {

@@ -12,3 +12,4 @@ coverage/
 *.log
 *.crx
 *.xpi
+.output-e2e/

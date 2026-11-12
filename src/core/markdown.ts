@@ -325,6 +325,17 @@ function createMarkdownIt(environment: MarkdownEnvironment): MarkdownItInstance 
 
   registerMath(markdown, environment);
 
+  // The alerts plugin writes the title text into HTML without escaping it, so raw HTML in
+  // an alert title could add images or styles. Escape the title before the plugin renders it.
+  const renderAlertOpen = markdown.renderer.rules.alert_open;
+  markdown.renderer.rules.alert_open = (tokens, index, options, env, self) => {
+    const token = tokens[index];
+    if (token && typeof token.meta?.title === 'string') {
+      token.meta = { ...token.meta, title: markdown.utils.escapeHtml(token.meta.title) };
+    }
+    return renderAlertOpen ? renderAlertOpen(tokens, index, options, env, self) : self.renderToken(tokens, index, options);
+  };
+
   for (const name of ['note', 'tip', 'warning', 'details']) {
     markdown.use(markdownItContainer, name, {
       render(tokens, index) {

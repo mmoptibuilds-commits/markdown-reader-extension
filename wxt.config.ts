@@ -1,8 +1,15 @@
 import { defineConfig } from 'wxt';
 
+// Set MARKDOWN_READER_E2E=1 to build the test variant. It grants the local test origin
+// host access so the runtime suite can exercise automatic opening without a native
+// permission prompt. The variant goes to a separate output folder and is never packaged.
+const e2eBuild = process.env.MARKDOWN_READER_E2E === '1';
+const e2eHostPermissions = ['http://127.0.0.1/*'];
+
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifestVersion: 3,
+  outDir: e2eBuild ? '.output-e2e' : '.output',
   manifest: ({ browser }) => ({
     name: 'Markdown Reader',
     short_name: 'Markdown Reader',
@@ -13,7 +20,16 @@ export default defineConfig({
       128: 'icon-128.png',
     },
     permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
+    ...(e2eBuild ? { host_permissions: e2eHostPermissions } : {}),
     optional_host_permissions: ['http://*/*', 'https://*/*'],
+    // Automatic opening sends a web page to reader.html with location.replace(). Chrome
+    // blocks that navigation to an extension page unless the page is web-accessible.
+    // Chrome's dynamic URL keeps the extension ID from being predictable to sites.
+    web_accessible_resources: [{
+      resources: ['reader.html'],
+      matches: ['http://*/*', 'https://*/*'],
+      ...(browser === 'firefox' ? {} : { use_dynamic_url: true }),
+    }],
     action: {
       default_title: 'Open Markdown Reader',
       default_icon: {
