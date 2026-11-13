@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { searchDocument, SEARCH_LIMIT } from './article-dom';
+import { addCodeLines, searchDocument, SEARCH_LIMIT } from './article-dom';
 
 const container = (html: string): HTMLElement => {
   const element = document.createElement('div');
@@ -41,5 +41,19 @@ describe('document search without the highlight API', () => {
     const result = searchDocument(element, 'a');
     expect(result.count).toBe(SEARCH_LIMIT);
     expect(result.capped).toBe(true);
+  });
+});
+
+describe('numbered code lines', () => {
+  it.each([
+    ['plain code', 'first line\nsecond line\n\nlast', 'first line\nsecond line\n\nlast'],
+    ['a trailing newline', 'a\nb\n', 'a\nb\n'],
+    ['highlighted spans across lines', '<span class="k">a\nb</span>\nc', 'a\nb\nc'],
+  ])('keeps the text of %s unchanged', (_name, html, text) => {
+    const code = container(`<code>${html}</code>`).querySelector('code') as HTMLElement;
+    expect(code.textContent).toBe(text);
+    addCodeLines(code);
+    expect(code.textContent).toBe(text);
+    expect(code.querySelectorAll('.code-line').length).toBe(text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length);
   });
 });

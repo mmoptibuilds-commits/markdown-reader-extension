@@ -56,7 +56,9 @@ export function ReaderApp(): ReactElement {
 
   const [rendered, setRendered] = useState<PreparedMarkdown>();
   // True once every slice of the rendered document is in the page.
-  const [contentReady, setContentReady] = useState(false);
+  const [contentReadyFor, setContentReadyFor] = useState<string>();
+  // The id of the document that `rendered` was prepared from.
+  const renderedFor = useRef<string | undefined>(undefined);
   const [rendering, setRendering] = useState(false);
   const [activeHeading, setActiveHeading] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
@@ -92,7 +94,7 @@ export function ReaderApp(): ReactElement {
     if (!activeDocument) { setRendered(undefined); return; }
     let cancelled = false;
     setRendering(true);
-    setContentReady(false);
+    setContentReadyFor(undefined);
     void prepareDocument(activeDocument.text, {
       ...(activeDocument.sourceUrl ? { sourceUrl: activeDocument.sourceUrl } : {}),
       ...(activeDocument.documentPath ? { documentPath: activeDocument.documentPath } : {}),
@@ -100,6 +102,7 @@ export function ReaderApp(): ReactElement {
       allowRemoteImages: settings.allowRemoteImages,
     }).then((result) => {
       if (cancelled) return;
+      renderedFor.current = activeDocument.id;
       setRendered(result);
       setActiveHeading('');
     }).catch((reason: unknown) => {
@@ -150,21 +153,24 @@ export function ReaderApp(): ReactElement {
     window.addEventListener('scroll', onScroll, { passive: true });
     measure();
     return () => { window.removeEventListener('scroll', onScroll); if (frame) window.cancelAnimationFrame(frame); };
-  }, [rendered, contentReady]);
+  }, [rendered, contentReadyFor]);
 
-  // Restore the saved position once per document, after it has rendered.
+  // Restore the saved position once per document, after that document has finished rendering.
+  // Readiness is tied to the document id, so a stale render of the previous file never counts.
   const restoredFor = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!activeDocument || !rendered || !contentReady || !settings.restorePosition || restoredFor.current === activeDocument.id) return;
-    restoredFor.current = activeDocument.id;
+    if (!activeDocument || !rendered || contentReadyFor !== activeDocument.id || !settings.restorePosition || restoredFor.current === activeDocument.id) return;
+    const id = activeDocument.id;
     let cancelled = false;
-    void getReadingPosition(activeDocument.id).then((position) => {
-      if (!cancelled && position !== undefined && position > 0.01) {
+    void getReadingPosition(id).then((position) => {
+      if (cancelled) return;
+      restoredFor.current = id;
+      if (position !== undefined && position > 0.01) {
         window.scrollTo({ top: position * (document.documentElement.scrollHeight - window.innerHeight), behavior: 'instant' });
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeDocument, rendered, contentReady, settings.restorePosition]);
+  }, [activeDocument, rendered, contentReadyFor, settings.restorePosition]);
 
   useEffect(() => {
     if (!documentId || !settings.restorePosition) return;
@@ -241,7 +247,7 @@ export function ReaderApp(): ReactElement {
     setSearchCapped(capped);
     setSearchIndex((index) => (count ? Math.min(index, count - 1) : 0));
   }, []);
-  const onContentComplete = useCallback(() => setContentReady(true), []);
+  const onContentComplete = useCallback(() => setContentReadyFor(renderedFor.current), []);
   const onOpenImage = useCallback((list: HTMLImageElement[], index: number) => { setImages(list); setImageIndex(index); }, []);
   const openFolderPath = source.openFolderPath;
   const onLocalLink = useCallback((path: string, hash: string) => {

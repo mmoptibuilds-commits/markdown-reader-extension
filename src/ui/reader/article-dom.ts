@@ -211,7 +211,7 @@ function splitHighlightedNode(node: Node): Node[][] {
   return lines;
 }
 
-/** Wraps each code line in a span so CSS can number lines without changing copied text. */
+/** Wraps each code line in a span so CSS can number lines; the code's text, newlines included, is unchanged. */
 export function addCodeLines(code: HTMLElement): void {
   if (code.dataset.lineMarkup === 'true') return;
   const lines: Node[][] = [[]];
@@ -221,12 +221,15 @@ export function addCodeLines(code: HTMLElement): void {
       lines[lines.length - 1]?.push(...part);
     });
   }
-  if (code.textContent?.endsWith('\n') && lines.length > 1 && lines.at(-1)?.every((node) => !node.textContent)) lines.pop();
+  const endsWithNewline = code.textContent?.endsWith('\n') ?? false;
+  if (endsWithNewline && lines.length > 1 && lines.at(-1)?.every((node) => !node.textContent)) lines.pop();
   code.replaceChildren(...lines.map((nodes, index) => {
     const line = document.createElement('span');
     line.className = 'code-line';
     line.dataset.line = String(index + 1);
     nodes.forEach((node) => line.append(node));
+    // Each line keeps its newline so the code's text is unchanged; a block-level line shows no extra gap.
+    if (index < lines.length - 1 || endsWithNewline) line.append(document.createTextNode('\n'));
     return line;
   }));
   code.dataset.lineMarkup = 'true';
