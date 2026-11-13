@@ -93,16 +93,37 @@ export async function readLocalMarkdown(url: URL, fetcher: typeof fetch): Promis
     await response.body?.cancel().catch(() => undefined);
     throw unreadable();
   }
-  let bytes: ArrayBuffer;
+  const tooLarge = (): LocalFileError =>
+    new LocalFileError('size', 'This file is larger than the 16 MB reading limit. Split it into smaller Markdown files.');
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > LOCAL_DOCUMENT_LIMIT_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+
+  // Read in chunks and stop as soon as the limit is passed, so an oversize file is never
+  // buffered whole.
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let text = '';
+  let total = 0;
   try {
-    bytes = await response.arrayBuffer();
-  } catch {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > LOCAL_DOCUMENT_LIMIT_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } catch (error) {
+    if (error instanceof LocalFileError) throw error;
     throw unreadable();
   }
-  if (bytes.byteLength > LOCAL_DOCUMENT_LIMIT_BYTES) {
-    throw new LocalFileError('size', 'This file is larger than the 16 MB reading limit. Split it into smaller Markdown files.');
-  }
-  return new TextDecoder().decode(bytes);
+  return text + decoder.decode();
 }
 
 export const LOCAL_HANDOFF_MESSAGE = 'markdown-reader:local-file';

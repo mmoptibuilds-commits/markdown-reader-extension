@@ -120,6 +120,44 @@ describe('reading a local Markdown file', () => {
     await expect(readLocalMarkdown(url, respond(large))).rejects.toMatchObject({ kind: 'size' });
   });
 
+  it('refuses a declared oversize file before reading it', async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream({ cancel() { cancelled = true; } }), {
+      headers: { 'content-length': String(LOCAL_DOCUMENT_LIMIT_BYTES + 1) },
+    });
+    await expect(readLocalMarkdown(url, async () => response)).rejects.toMatchObject({ kind: 'size' });
+    expect(cancelled).toBe(true);
+  });
+
+  it('stops reading an undeclared oversize file once it passes the byte limit', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulls = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 64) controller.close();
+        else controller.enqueue(chunk);
+      },
+      cancel() { cancelled = true; },
+    });
+    await expect(readLocalMarkdown(url, async () => new Response(stream))).rejects.toMatchObject({ kind: 'size' });
+    expect(pulls).toBeLessThan(20);
+    expect(cancelled).toBe(true);
+  });
+
+  it('reads a streamed file split across chunks, including a split multi-byte character', async () => {
+    const bytes = new TextEncoder().encode('# Ü — 日本');
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 4));
+        controller.enqueue(bytes.slice(4));
+        controller.close();
+      },
+    });
+    await expect(readLocalMarkdown(url, async () => new Response(stream))).resolves.toBe('# Ü — 日本');
+  });
+
   it('reports an unsuccessful response as unreadable', async () => {
     await expect(readLocalMarkdown(url, respond('missing', { status: 404 }))).rejects.toMatchObject({ kind: 'unreadable' });
   });
