@@ -34,11 +34,13 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { renderMarkdown, sanitizeSvg, type RenderedMarkdown } from '../core/markdown';
+import { localAutoOpenState, localFileNameFromUrl, LocalFileError, parseLocalMarkdownUrl, readLocalMarkdown, type LocalAutoOpenState } from '../core/local-file';
 import { documentNameFromUrl, readRemoteMarkdown } from '../core/remote';
 import { DEFAULT_SETTINGS, type ReaderSettings } from '../core/settings';
 import {
   addRecent,
   getBookmarks,
+  getLocalHandoff,
   getReadingPosition,
   loadSettings,
   saveReadingPosition,
@@ -47,6 +49,7 @@ import {
   toggleBookmark,
   type Bookmark,
 } from '../shared/storage';
+import { getLocalFileAccess } from '../shared/file-access';
 import { themeClass, themeStyle } from './theme';
 
 interface ReaderDocument {
@@ -124,6 +127,12 @@ function stableIdentifier(value: string): string {
   for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ (value.charCodeAt(index) ?? 0), 0x01000193);
   return (hash >>> 0).toString(36);
 }
+
+const localAccessMessages: Record<Exclude<LocalAutoOpenState, 'active'>, string> = {
+  disabled: 'Automatic opening of local files is off. Turn it on in Settings › File handling, or use Open file.',
+  'permission-required': 'The browser has not given Markdown Reader access to local files. Settings › File handling explains how to allow it.',
+  unavailable: 'This browser cannot report local file access for extensions. Use Open file instead.',
+};
 
 function fileDocumentId(identity: string, size: number, lastModified: number): string {
   return `local:${size.toString(36)}:${lastModified.toString(36)}:${stableIdentifier(identity)}`;
@@ -283,7 +292,7 @@ export function ReaderApp(): ReactElement {
   const [lightboxScale, setLightboxScale] = useState(1);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [scrollProgress, setScrollProgress] = useState(0);
-  const [remoteInput, setRemoteInput] = useState(() => new URLSearchParams(window.location.search).get('url') ?? '');
+  const [remoteInput, setRemoteInput] = useState(() => { const launch = new URLSearchParams(window.location.search).get('url') ?? ''; return launch.startsWith('file:') ? '' : launch; });
   const [loadingRemote, setLoadingRemote] = useState(false);
 
   const articleRef = useRef<HTMLElement>(null);
@@ -775,9 +784,44 @@ export function ReaderApp(): ReactElement {
     await fetchRemoteDocument(url.href, true);
   }, [fetchRemoteDocument, remoteInput]);
 
+  /** Opens a local file sent by automatic opening: read it directly, or use the handoff copy. */
+  const openLocalUrl = useCallback(async (rawUrl: string, token: string | null): Promise<void> => {
+    const url = parseLocalMarkdownUrl(rawUrl);
+    if (!url) { setError('This local address is not a Markdown file the reader can open.'); return; }
+    const [saved, access] = await Promise.all([loadSettings(), getLocalFileAccess()]);
+    const state = localAutoOpenState(saved.autoOpenLocalFiles, access);
+    if (state !== 'active') { setError(localAccessMessages[state]); return; }
+    let text: string | undefined;
+    try {
+      text = await readLocalMarkdown(url, fetch);
+    } catch (reason) {
+      if (reason instanceof LocalFileError && reason.kind === 'size') { setError(reason.message); return; }
+      // Firefox does not let extension pages read file URLs; the content script's copy is used there.
+      text = token ? (await getLocalHandoff(token, url.href).catch(() => undefined))?.text : undefined;
+      if (text === undefined) {
+        setError(import.meta.env.FIREFOX
+          ? 'This local file could not be opened automatically. Files larger than 4 MB, and files reopened after the browser restarts, need Open file in Firefox.'
+          : reason instanceof Error ? reason.message : 'This local file could not be read.');
+        return;
+      }
+    }
+    const name = localFileNameFromUrl(url);
+    const id = `local-url:${stableIdentifier(url.href)}`;
+    setActiveDocument({ id, name, source: name, text, kind: 'local' });
+    setSourceMode('rendered');
+    setScrollProgress(0);
+    setError('');
+    void addRecent({ id, name, kind: 'local' }).catch(() => undefined);
+  }, []);
+
   useEffect(() => {
-    const launchUrl = new URLSearchParams(window.location.search).get('url');
+    const params = new URLSearchParams(window.location.search);
+    const launchUrl = params.get('url');
     if (!launchUrl) return;
+    if (launchUrl.startsWith('file:')) {
+      void openLocalUrl(launchUrl, params.get('local')).catch(() => setError('This local file could not be opened.'));
+      return;
+    }
     let launchOrigin: string;
     try { launchOrigin = `${new URL(launchUrl).origin}/*`; } catch { setError('The link is not a valid HTTP or HTTPS URL.'); return; }
     let cancelled = false;
@@ -787,7 +831,7 @@ export function ReaderApp(): ReactElement {
       else setError('Allow access to this URL’s site in the popup, then open the link again.');
     }).catch(() => setError('This URL could not be checked for permission.'));
     return () => { cancelled = true; };
-  }, [fetchRemoteDocument]);
+  }, [fetchRemoteDocument, openLocalUrl]);
 
   const updateFolderExpansion = useCallback((path: string) => {
     setFolder((current) => {

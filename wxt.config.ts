@@ -5,6 +5,10 @@ import { defineConfig } from 'wxt';
 // permission prompt. The variant goes to a separate output folder and is never packaged.
 const e2eBuild = process.env.MARKDOWN_READER_E2E === '1';
 const e2eHostPermissions = ['http://127.0.0.1/*'];
+// Local automatic opening. Chromium injects into file URLs only with this host permission
+// and only after the user turns on "Allow access to file URLs"; Firefox 153+ also requires
+// its "Access local files" permission. Neither browser shows an install warning for it.
+const localFileHostPermissions = ['file:///*'];
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
@@ -20,14 +24,15 @@ export default defineConfig({
       128: 'icon-128.png',
     },
     permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
-    ...(e2eBuild ? { host_permissions: e2eHostPermissions } : {}),
+    host_permissions: [...localFileHostPermissions, ...(e2eBuild ? e2eHostPermissions : [])],
     optional_host_permissions: ['http://*/*', 'https://*/*'],
     // Automatic opening sends a web page to reader.html with location.replace(). Chrome
     // blocks that navigation to an extension page unless the page is web-accessible.
     // Chrome's dynamic URL keeps the extension ID from being predictable to sites.
+    // A local Markdown file reaches the reader the same way, so file URLs are matched too.
     web_accessible_resources: [{
       resources: ['reader.html'],
-      matches: ['http://*/*', 'https://*/*'],
+      matches: ['http://*/*', 'https://*/*', 'file:///*'],
       ...(browser === 'firefox' ? {} : { use_dynamic_url: true }),
     }],
     action: {

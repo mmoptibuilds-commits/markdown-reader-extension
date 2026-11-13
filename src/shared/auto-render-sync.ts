@@ -7,8 +7,13 @@ export interface AutoRenderRegistry {
   unregister(): Promise<void>;
 }
 
+/** Every local file. The browser injects there only after the user grants file access. */
+export const LOCAL_FILE_MATCH_PATTERN = 'file:///*';
+
 export interface AutoRenderSyncDeps {
   readOrigins(): Promise<string[]>;
+  /** The user's opt-in for local files. Browser file access is enforced by the browser itself. */
+  readLocalFilesEnabled(): Promise<boolean>;
   /** Asks the browser whether a host pattern such as `https://example.test/*` is currently granted. */
   hasOriginAccess(pattern: string): Promise<boolean>;
   registry: AutoRenderRegistry;
@@ -51,6 +56,12 @@ export function createAutoRenderSync(deps: AutoRenderSyncDeps): () => Promise<vo
       } catch (error) {
         deps.reportError?.(error);
       }
+    }
+
+    try {
+      if (await deps.readLocalFilesEnabled()) matches.push(LOCAL_FILE_MATCH_PATTERN);
+    } catch (error) {
+      deps.reportError?.(error);
     }
 
     const registered = await deps.registry.isRegistered();

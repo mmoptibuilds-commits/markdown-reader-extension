@@ -30,6 +30,23 @@ describe('settings normalization', () => {
   });
 });
 
+describe('local automatic opening preference', () => {
+  it('is off by default', () => {
+    expect(DEFAULT_SETTINGS.autoOpenLocalFiles).toBe(false);
+    expect(normalizeSettings({}).autoOpenLocalFiles).toBe(false);
+  });
+
+  it('accepts only an explicit true', () => {
+    expect(normalizeSettings({ autoOpenLocalFiles: true }).autoOpenLocalFiles).toBe(true);
+    expect(normalizeSettings({ autoOpenLocalFiles: 'true' }).autoOpenLocalFiles).toBe(false);
+    expect(normalizeSettings({ autoOpenLocalFiles: 1 }).autoOpenLocalFiles).toBe(false);
+  });
+
+  it('survives export and import', () => {
+    expect(parseSettingsImport(exportSettings({ ...DEFAULT_SETTINGS, autoOpenLocalFiles: true })).autoOpenLocalFiles).toBe(true);
+  });
+});
+
 describe('settings import and export', () => {
   it('round-trips only versioned settings data', () => {
     const exported = exportSettings({ ...DEFAULT_SETTINGS, theme: 'midnight', fontSize: 20 });

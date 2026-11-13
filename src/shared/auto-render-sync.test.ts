@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAutoRenderSync, type AutoRenderRegistry, type AutoRenderSyncDeps } from './auto-render-sync';
+import { createAutoRenderSync, LOCAL_FILE_MATCH_PATTERN, type AutoRenderRegistry, type AutoRenderSyncDeps } from './auto-render-sync';
 
 interface FakeRegistry extends AutoRenderRegistry {
   calls: string[];
@@ -29,10 +29,11 @@ function fakeRegistry(initial?: string[]): FakeRegistry {
   return registry;
 }
 
-function deps(overrides: Partial<AutoRenderSyncDeps> & { origins: string[]; granted: string[] }, registry: AutoRenderRegistry): AutoRenderSyncDeps {
-  const { origins, granted, ...rest } = overrides;
+function deps(overrides: Partial<AutoRenderSyncDeps> & { origins: string[]; granted: string[]; localFiles?: boolean }, registry: AutoRenderRegistry): AutoRenderSyncDeps {
+  const { origins, granted, localFiles = false, ...rest } = overrides;
   return {
     readOrigins: async () => origins,
+    readLocalFilesEnabled: async () => localFiles,
     hasOriginAccess: async (pattern) => granted.includes(pattern),
     registry,
     reportError: () => undefined,
@@ -116,5 +117,76 @@ describe('automatic rendering registration', () => {
     await Promise.all([firstPass, secondRequest]);
 
     expect(registry.matches).toEqual(['https://first.example.test/*', 'https://second.example.test/*']);
+  });
+
+  describe('local files', () => {
+    it('registers the file pattern when the user turns on local automatic opening', async () => {
+      const registry = fakeRegistry();
+      const sync = createAutoRenderSync(deps({ origins: [], granted: [], localFiles: true }, registry));
+
+      await sync();
+
+      expect(registry.matches).toEqual([LOCAL_FILE_MATCH_PATTERN]);
+      expect(LOCAL_FILE_MATCH_PATTERN).toBe('file:///*');
+    });
+
+    it('adds the file pattern beside granted web origins', async () => {
+      const registry = fakeRegistry();
+      const sync = createAutoRenderSync(deps({ origins: ['https://notes.example.test'], granted: ['https://notes.example.test/*'], localFiles: true }, registry));
+
+      await sync();
+
+      expect(registry.matches).toEqual(['https://notes.example.test/*', 'file:///*']);
+    });
+
+    it('leaves the browser to gate file access, so a later grant needs no new sync', async () => {
+      const registry = fakeRegistry();
+      const checked: string[] = [];
+      const sync = createAutoRenderSync(deps({
+        origins: [],
+        granted: [],
+        localFiles: true,
+        hasOriginAccess: async (pattern) => { checked.push(pattern); return false; },
+      }, registry));
+
+      await sync();
+
+      expect(checked).not.toContain('file:///*');
+      expect(registry.matches).toEqual(['file:///*']);
+    });
+
+    it('removes the file pattern when the user turns local automatic opening off', async () => {
+      const registry = fakeRegistry(['https://notes.example.test/*', 'file:///*']);
+      const sync = createAutoRenderSync(deps({ origins: ['https://notes.example.test'], granted: ['https://notes.example.test/*'] }, registry));
+
+      await sync();
+
+      expect(registry.matches).toEqual(['https://notes.example.test/*']);
+    });
+
+    it('unregisters when local files were the only remaining target', async () => {
+      const registry = fakeRegistry(['file:///*']);
+      const sync = createAutoRenderSync(deps({ origins: [], granted: [] }, registry));
+
+      await sync();
+
+      expect(registry.matches).toBeUndefined();
+    });
+
+    it('treats an unreadable preference as off and reports it', async () => {
+      const registry = fakeRegistry(['file:///*']);
+      const reported: unknown[] = [];
+      const sync = createAutoRenderSync(deps({
+        origins: [],
+        granted: [],
+        readLocalFilesEnabled: async () => { throw new Error('storage unavailable'); },
+        reportError: (error) => reported.push(error),
+      }, registry));
+
+      await sync();
+
+      expect(registry.matches).toBeUndefined();
+      expect(reported).toHaveLength(1);
+    });
   });
 });

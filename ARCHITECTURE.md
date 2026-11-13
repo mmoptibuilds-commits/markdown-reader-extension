@@ -12,6 +12,10 @@ Browser action ──> Popup ──> Reader tab
 Web page (granted origin) ──> content-scripts/auto-render.js
                               └─> location.replace() ──> Reader tab (?url=…)
 
+Local file (opt-in + browser file access) ──> content-scripts/auto-render.js
+   ├─> runtime message with the page text ──> background ──> storage.session (token)
+   └─> location.replace() ──> Reader (?url=file…&local=token) ──> fetch, else handoff copy
+
 Reader ──> src/core document, remote, and Markdown modules
        ├─> lazy local Mermaid / Graphviz / KaTeX / language chunks
        └─> local storage adapter for preferences and reader metadata
@@ -27,7 +31,9 @@ Background service worker ──> src/shared/auto-render-sync ──> scripting.
 - `entrypoints/options`: persistent appearance, reading, Markdown, code, diagram, file, online, privacy, shortcut, and advanced settings.
 - `entrypoints/background.ts`: the service worker. It keeps the automatic-opening registration in step with stored sites and browser permissions, on install, startup, permission removal, and each settings change.
 - `entrypoints/auto-render.content.ts`: the automatic-opening content script. It is registered at runtime, never statically, and its `matches` list is empty on purpose (see Manifest and permissions).
-- `src/core/auto-open.ts`: the pure decision of whether a loaded page is Markdown that should move to the reader, and the reader URL builder.
+- `src/core/auto-open.ts`: the pure decision of whether a loaded page is Markdown that should move to the reader, plain-text extraction, the reader URL builder, and the one-time reader history settle.
+- `src/core/local-file.ts`: local Markdown URL parsing, the four-state opt-in/permission model, handoff validation, and the local file reader.
+- `src/shared/file-access.ts`: the one place that asks the browser for file access, plus the Chromium extension-details link.
 - `src/core/remote.ts`: the remote document loader. Timeout, byte limit, content-type checks, origin checks, and user-facing error kinds live here, with tests.
 - `src/shared/auto-render-sync.ts`: converts stored origins into host patterns, checks each against browser permission, and updates the single registration. Overlapping requests are coalesced into one follow-up pass.
 - `src/core/document.ts`: extension and MIME classification, safe link protocols, headings, frontmatter, relative paths, and search helpers. `classifyDocument` refuses HTML even at a `.md` address.
@@ -56,22 +62,24 @@ The registration is a single dynamic content script with id `markdown-reader-aut
 - updates the existing registration in place when the list changes, so a rejected update leaves the previous registration active,
 - unregisters it when no enabled origin remains.
 
+When the user opts in to local automatic opening, `file:///*` is added to the same registration. File access is not checked first, because the browser refuses to inject without it; the worker re-syncs when the opt-in changes (`storage.onChanged`) and on every worker start, which also covers Chromium restarting the extension after its file-access switch changes.
+
 Stored origins are accepted only as plain `http(s)` origins with no credentials and no path. Origins with ports are supported; the runtime suite verifies that Chromium registers and matches them.
 
 ## Persistence boundaries
 
-`browser.storage.local` stores user preferences and non-content metadata: up to 12 recent items, optional normalized scroll positions, bookmarks, and automatic-opening origin preferences. Remote recents include their URL so they can be reopened. Local file paths and document source text are omitted from persistent recents. `browser.storage.session` is used only for a pending file or page handoff and is removed on consumption. Folder `File` objects and blob URLs remain in memory until the workspace changes or the reader closes.
+`browser.storage.local` stores user preferences and non-content metadata: up to 12 recent items, optional normalized scroll positions, bookmarks, and automatic-opening origin preferences. Remote recents include their URL so they can be reopened. Local file paths and document source text are omitted from persistent recents. `browser.storage.session` is used for a pending file or page handoff, removed on consumption, and for local automatic-opening handoffs, removed when their tab closes. Folder `File` objects and blob URLs remain in memory until the workspace changes or the reader closes.
 
 Settings are changed through `updateSettings`, a read-modify-write patch. The popup uses it for theme changes, so a font change made elsewhere while the popup is open is not overwritten.
 
 ## Manifest and permissions
 
-The manifest is generated from `wxt.config.ts` for Chromium and Firefox. Both builds use Manifest V3. Required permissions are limited to active-tab access, scripting, local/session storage, and clipboard writes. Host access is optional and requested for a specific HTTP(S) origin at the point of use. The production manifest has no `host_permissions`.
+The manifest is generated from `wxt.config.ts` for Chromium and Firefox. Both builds use Manifest V3. Required permissions are limited to active-tab access, scripting, local/session storage, and clipboard writes. Host access is optional and requested for a specific HTTP(S) origin at the point of use. The production manifest's only `host_permissions` entry is `file:///*`, used only after the user grants file access in the browser.
 
 Two details are easy to get wrong:
 
 - WXT adds the `matches` of runtime-registered content scripts to `host_permissions`. The automatic-opening entrypoint therefore declares an empty `matches`, and its real origins come from the runtime registration. Without this, every install would request all sites.
-- `reader.html` is a `web_accessible_resource` so that a web page can navigate to it. Chromium adds `use_dynamic_url`; Firefox receives the plain declaration. See SECURITY.md.
+- `reader.html` is a `web_accessible_resource` so that a web page or local file can navigate to it. Chromium adds `use_dynamic_url`; Firefox receives the plain declaration. See SECURITY.md.
 
 The test variant (`MARKDOWN_READER_E2E=1`) builds into `.output-e2e/` and adds one test origin to `host_permissions`. It is never packaged.
 

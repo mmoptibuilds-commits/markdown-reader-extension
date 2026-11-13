@@ -1,7 +1,11 @@
 // Minimal typings for the extension APIs that the runtime specs call from inside page.evaluate().
 // The real APIs are provided by Chromium; these declarations only keep the specs type-checked.
 declare const chrome: {
-  storage: { local: { set(items: Record<string, unknown>): Promise<void> } };
+  storage: {
+    local: { set(items: Record<string, unknown>): Promise<void> };
+    session: { get(keys: null): Promise<Record<string, unknown>> };
+  };
+  extension: { isAllowedFileSchemeAccess(): Promise<boolean> };
   runtime: { sendMessage(message: unknown): Promise<unknown> };
   permissions: { contains(request: { origins: string[] }): Promise<boolean> };
   scripting: { getRegisteredContentScripts(filter?: { ids?: string[] }): Promise<unknown[]> };

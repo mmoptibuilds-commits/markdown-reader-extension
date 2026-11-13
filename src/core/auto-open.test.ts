@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { readerUrlFor, shouldOpenInReader, type AutoOpenPage } from './auto-open';
+import { plainTextOfDocument, readerUrlFor, settledReaderLocation, shouldOpenInReader, type AutoOpenPage } from './auto-open';
 
 const page = (url: string, contentType: string, overrides: Partial<AutoOpenPage> = {}): AutoOpenPage => ({
   url,
   contentType,
   topLevel: true,
-  fileAccessAllowed: false,
+  localFilesEnabled: false,
   ...overrides,
 });
 
@@ -54,10 +54,36 @@ describe('automatic Markdown opening', () => {
     expect(shouldOpenInReader(page('https://user:secret@notes.example.test/README.md', 'text/plain'))).toBe(false);
   });
 
-  it('opens file URLs only after the user allows file URL access', () => {
-    const file = 'file:///Users/reader/notes/README.md';
-    expect(shouldOpenInReader(page(file, 'text/plain'))).toBe(false);
-    expect(shouldOpenInReader(page(file, 'text/plain', { fileAccessAllowed: true }))).toBe(true);
+  describe('local files', () => {
+    const file = 'file:///home/reader/My%20Notes/%C3%9Cbersicht.md';
+
+    it('opens a local Markdown file only after the user turns on local automatic opening', () => {
+      expect(shouldOpenInReader(page(file, 'text/markdown'))).toBe(false);
+      expect(shouldOpenInReader(page(file, 'text/markdown', { localFilesEnabled: true }))).toBe(true);
+      expect(shouldOpenInReader(page(file, 'text/plain', { localFilesEnabled: true }))).toBe(true);
+    });
+
+    it.each([
+      ['an HTML file', 'file:///home/reader/page.html', 'text/html'],
+      ['a PDF', 'file:///home/reader/paper.pdf', 'application/pdf'],
+      ['an image', 'file:///home/reader/photo.png', 'image/png'],
+      ['a text file', 'file:///home/reader/notes.txt', 'text/plain'],
+      ['a directory listing', 'file:///home/reader/notes/', 'text/html'],
+      ['a Markdown media type at a non-Markdown path', 'file:///home/reader/readme', 'text/markdown'],
+      ['HTML at a .md path', 'file:///home/reader/page.md', 'text/html'],
+      ['a .md file the browser treats as a download', 'file:///home/reader/a.md', 'application/octet-stream'],
+      ['a network share', 'file://server/share/README.md', 'text/plain'],
+    ])('does not open %s', (_label, url, contentType) => {
+      expect(shouldOpenInReader(page(url, contentType, { localFilesEnabled: true }))).toBe(false);
+    });
+
+    it('does not open a local file inside a frame', () => {
+      expect(shouldOpenInReader(page(file, 'text/markdown', { localFilesEnabled: true, topLevel: false }))).toBe(false);
+    });
+
+    it('does not let the local opt-in widen web automatic opening', () => {
+      expect(shouldOpenInReader(page('ftp://files.example.test/README.md', 'text/plain', { localFilesEnabled: true }))).toBe(false);
+    });
   });
 });
 
@@ -69,5 +95,75 @@ describe('reader URL construction', () => {
 
     expect(built.split('?', 1)[0]).toBe('chrome-extension://abcdef/reader.html');
     expect(target.searchParams.get('url')).toBe(original);
+  });
+
+  it('round-trips a local file URL with spaces and Unicode unchanged', () => {
+    const original = 'file:///home/reader/My%20Notes/%C3%9Cbersicht.md#part-2';
+    const target = new URL(readerUrlFor('moz-extension://uuid/reader.html', original));
+    expect(target.searchParams.get('url')).toBe(original);
+    expect(target.searchParams.has('local')).toBe(false);
+  });
+
+  it('adds the handoff token when one is given', () => {
+    const target = new URL(readerUrlFor('chrome-extension://abcdef/reader.html', 'file:///a.md', 'tok_123'));
+    expect(target.searchParams.get('url')).toBe('file:///a.md');
+    expect(target.searchParams.get('local')).toBe('tok_123');
+  });
+});
+
+describe('plain-text document extraction', () => {
+  const documentWith = (body: string): Document => new DOMParser().parseFromString(`<!doctype html><html><head></head><body>${body}</body></html>`, 'text/html');
+
+  it('returns the exact text of a browser plain-text view', () => {
+    expect(plainTextOfDocument(documentWith('<pre># Title\n\n&lt;script&gt;x&lt;/script&gt; ü</pre>'))).toBe('# Title\n\n<script>x</script> ü');
+  });
+
+  it('returns empty text for an empty file, which browsers show with no pre element', () => {
+    expect(plainTextOfDocument(documentWith(''))).toBe('');
+  });
+
+  it.each([
+    ['an HTML page', '<h1>Title</h1><p>Body</p>'],
+    ['a pre next to other content', '<pre>text</pre><p>more</p>'],
+    ['an empty body with stray text', 'stray'],
+  ])('refuses %s', (_label, body) => {
+    expect(plainTextOfDocument(documentWith(body))).toBeUndefined();
+  });
+});
+
+describe('settling a reader page reached by automatic opening', () => {
+  it('re-enters the reader once for a local file, keeping every parameter', () => {
+    const href = 'chrome-extension://abc/reader.html?url=file%3A%2F%2F%2Fa%2520b.md&local=tok_12345678';
+    const next = settledReaderLocation(href);
+    expect(next).toBeDefined();
+    const url = new URL(next ?? '');
+    expect(url.searchParams.get('url')).toBe('file:///a%20b.md');
+    expect(url.searchParams.get('local')).toBe('tok_12345678');
+    expect(url.searchParams.get('settled')).toBe('1');
+    expect(settledReaderLocation(next ?? '')).toBeUndefined();
+  });
+
+  it.each([
+    ['https://example.test/a.md#Heading', 'https%3A%2F%2Fexample.test%2Fa.md%23Heading'],
+    ['http://127.0.0.1:8080/docs/read%20me.md?ref=1', 'http%3A%2F%2F127.0.0.1%3A8080%2Fdocs%2Fread%2520me.md%3Fref%3D1'],
+    ['HTTPS://EXAMPLE.TEST/A.MD', 'HTTPS%3A%2F%2FEXAMPLE.TEST%2FA.MD'],
+  ])('re-enters the reader once for the web document %s', (documentUrl, encoded) => {
+    const next = settledReaderLocation(`moz-extension://abc/reader.html?url=${encoded}`);
+    expect(next).toBeDefined();
+    const url = new URL(next ?? '');
+    expect(next?.startsWith('moz-extension://abc/reader.html?')).toBe(true);
+    expect(url.searchParams.get('url')).toBe(documentUrl);
+    expect(url.searchParams.get('settled')).toBe('1');
+    expect(settledReaderLocation(next ?? '')).toBeUndefined();
+  });
+
+  it.each([
+    ['a plain reader page', 'chrome-extension://abc/reader.html'],
+    ['an empty document address', 'chrome-extension://abc/reader.html?url='],
+    ['an unsupported scheme', 'chrome-extension://abc/reader.html?url=javascript%3Aalert(1)'],
+    ['a data address', 'chrome-extension://abc/reader.html?url=data%3Atext%2Fmarkdown%2C%23%20x'],
+    ['a relative address', 'chrome-extension://abc/reader.html?url=%2Fa.md'],
+  ])('leaves %s alone', (_label, href) => {
+    expect(settledReaderLocation(href)).toBeUndefined();
   });
 });

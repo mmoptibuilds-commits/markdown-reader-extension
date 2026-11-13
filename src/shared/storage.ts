@@ -6,6 +6,7 @@ import {
   type ReaderSettings,
   type SettingsStorage,
 } from '../core/settings';
+import { parseLocalHandoff, type LocalHandoff } from '../core/local-file';
 
 export interface RecentDocument {
   id: string;
@@ -37,6 +38,14 @@ const RECENTS_KEY = 'markdownReaderRecents';
 const PROGRESS_KEY = 'markdownReaderProgress';
 const BOOKMARKS_KEY = 'markdownReaderBookmarks';
 const AUTO_RENDER_KEY = 'markdownReaderAutoRenderOrigins';
+const LOCAL_HANDOFF_PREFIX = 'markdownReaderLocalFile:';
+const MAX_LOCAL_HANDOFFS = 6;
+const handoffTokenPattern = /^[\w-]{8,64}$/u;
+
+interface StoredLocalHandoff extends LocalHandoff {
+  tabId: number;
+  createdAt: number;
+}
 
 const settingsStorage: SettingsStorage = {
   get: (key) => browser.storage.local.get(key),
@@ -150,4 +159,47 @@ export async function setAutoRenderOrigins(origins: string[]): Promise<void> {
 
 export async function clearLocalReaderData(): Promise<void> {
   await browser.storage.local.remove([RECENTS_KEY, PROGRESS_KEY, BOOKMARKS_KEY, AUTO_RENDER_KEY]);
+}
+
+const storedHandoffs = async (): Promise<Array<[string, StoredLocalHandoff]>> => {
+  const all = await browser.storage.session.get(null);
+  return Object.entries(all)
+    .filter((entry): entry is [string, StoredLocalHandoff] => entry[0].startsWith(LOCAL_HANDOFF_PREFIX) && typeof entry[1] === 'object' && entry[1] !== null)
+    .sort(([, a], [, b]) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+};
+
+/**
+ * Keeps a local file's text in memory-only session storage so the reader can show it in
+ * browsers that do not let extension pages read file URLs. Entries are bounded in number,
+ * evicted oldest first when the quota is reached, and removed when their tab closes.
+ */
+export async function putLocalHandoff(token: string, handoff: LocalHandoff & { tabId: number }): Promise<void> {
+  if (!handoffTokenPattern.test(token)) throw new Error('Invalid handoff token.');
+  const entry: StoredLocalHandoff = { url: handoff.url, text: handoff.text, tabId: handoff.tabId, createdAt: Date.now() };
+  const older = (await storedHandoffs()).map(([key]) => key);
+  const excess = older.slice(MAX_LOCAL_HANDOFFS - 1);
+  if (excess.length) await browser.storage.session.remove(excess);
+  const evictable = older.slice(0, MAX_LOCAL_HANDOFFS - 1);
+  for (;;) {
+    try {
+      await browser.storage.session.set({ [LOCAL_HANDOFF_PREFIX + token]: entry });
+      return;
+    } catch (error) {
+      const oldest = evictable.pop();
+      if (!oldest) throw error;
+      await browser.storage.session.remove(oldest);
+    }
+  }
+}
+
+/** Returns the stored text only when the token and the file URL both match. */
+export async function getLocalHandoff(token: string, url: string): Promise<LocalHandoff | undefined> {
+  if (!handoffTokenPattern.test(token)) return undefined;
+  const key = LOCAL_HANDOFF_PREFIX + token;
+  return parseLocalHandoff((await browser.storage.session.get(key))[key], url);
+}
+
+export async function removeLocalHandoffsForTab(tabId: number): Promise<void> {
+  const keys = (await storedHandoffs()).filter(([, entry]) => entry.tabId === tabId).map(([key]) => key);
+  if (keys.length) await browser.storage.session.remove(keys);
 }

@@ -29,6 +29,8 @@ export interface ReaderSettings {
   liveReloadEnabled: boolean;
   liveReloadSeconds: number;
   restorePosition: boolean;
+  /** Opens local Markdown files in the reader. The browser must also grant file access. */
+  autoOpenLocalFiles: boolean;
   customCss: string;
   customThemes: CustomTheme[];
 }
@@ -52,6 +54,7 @@ export const DEFAULT_SETTINGS: Readonly<ReaderSettings> = Object.freeze({
   liveReloadEnabled: false,
   liveReloadSeconds: 15,
   restorePosition: false,
+  autoOpenLocalFiles: false,
   customCss: '',
   customThemes: [],
 });
@@ -166,6 +169,7 @@ export function normalizeSettings(value: unknown): ReaderSettings {
     liveReloadEnabled: input.liveReloadEnabled === true,
     liveReloadSeconds: reloadSeconds,
     restorePosition: input.restorePosition === true,
+    autoOpenLocalFiles: input.autoOpenLocalFiles === true,
     customCss,
     customThemes,
   };

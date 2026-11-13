@@ -10,6 +10,8 @@ import {
   type CustomTheme,
   type ReaderSettings,
 } from '../core/settings';
+import { localAutoOpenState, type LocalAutoOpenState } from '../core/local-file';
+import { extensionSettingsUrl, getLocalFileAccess } from '../shared/file-access';
 import { clearLocalReaderData, getAutoRenderOrigins, loadSettings, saveSettings, setAutoRenderOrigins } from '../shared/storage';
 import { themeStyle } from './theme';
 
@@ -38,6 +40,23 @@ export function SettingsApp(): ReactElement {
   const [themeForeground, setThemeForeground] = useState('#202820');
   const [themeAccent, setThemeAccent] = useState('#386b4f');
   const importRef = useRef<HTMLInputElement>(null);
+  const [fileAccess, setFileAccess] = useState<boolean | undefined>();
+
+  // File access can change in browser settings while this page is open.
+  useEffect(() => {
+    const refresh = (): void => { void getLocalFileAccess().then(setFileAccess); };
+    refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    browser.permissions.onAdded.addListener(refresh);
+    browser.permissions.onRemoved.addListener(refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      browser.permissions.onAdded.removeListener(refresh);
+      browser.permissions.onRemoved.removeListener(refresh);
+    };
+  }, []);
 
   useEffect(() => {
     void Promise.all([loadSettings(), getAutoRenderOrigins()]).then(([saved, savedOrigins]) => {
@@ -158,7 +177,8 @@ export function SettingsApp(): ReactElement {
         <section id="files" className="settings-section">
           <div className="section-heading"><h2>File handling</h2><p>Local file contents and folders stay in memory for the reading session.</p></div>
           <div className="setting-note"><span>Use Open file for one document, or Open folder to navigate Markdown files and relative images. Folder access falls back to the browser’s directory input where File System Access is unavailable.</span></div>
-          <div className="setting-note"><span>Local files open with the file picker, drag and drop, or the folder picker. The reader does not open file:// addresses, so automatic opening does not cover local files.</span></div>
+          <ToggleSetting label="Automatically open local Markdown files" description="When you open a .md, .markdown, .mdx, .mkd, .mkdn, .mdown, or .mdwn file in the browser, show it in the reader. Other file types are left alone." checked={settings.autoOpenLocalFiles} onChange={(checked) => update({ autoOpenLocalFiles: checked })} />
+          <LocalFileStatus state={localAutoOpenState(settings.autoOpenLocalFiles, fileAccess)} fileAccess={fileAccess} onOpenSettings={(url) => { void browser.tabs.create({ url }).catch(() => setStatus('The browser’s extension page could not be opened. Open it from the browser menu instead.')); }} />
         </section>
 
         <section id="online" className="settings-section">
@@ -216,6 +236,30 @@ export function SettingsApp(): ReactElement {
 
 function RangeSetting({ label, value, min, max, step = 1, unit, onChange }: { label: string; value: number; min: number; max: number; step?: number; unit: string; onChange: (value: number) => void }): ReactElement {
   return <label className="range-setting"><span><strong>{label}</strong><output>{value}{unit}</output></span><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+}
+
+const localStateText: Record<LocalAutoOpenState, string> = {
+  active: 'On. Local Markdown files you open in this browser move to the reader.',
+  disabled: 'Off.',
+  'permission-required': 'Waiting for browser permission. Local files cannot open automatically until the browser allows file access.',
+  unavailable: 'Unavailable. This browser does not report local file access for extensions, so local files cannot open automatically. Firefox needs version 153 or later.',
+};
+
+function LocalFileStatus({ state, fileAccess, onOpenSettings }: { state: LocalAutoOpenState; fileAccess: boolean | undefined; onOpenSettings: (url: string) => void }): ReactElement {
+  const settingsUrl = extensionSettingsUrl();
+  const needsAccess = fileAccess === false;
+  const instructions = import.meta.env.FIREFOX
+    ? 'To allow it, open the Firefox menu › Add-ons and themes, choose Markdown Reader, open Permissions and data, and turn on Access local files on your computer.'
+    : 'To allow it, open this extension’s details page and turn on Allow access to file URLs. The browser restarts the extension, so this page may close.';
+  return <div className="setting-note local-file-status" data-state={state}>
+    <span>
+      <strong>{localStateText[state]}</strong>
+      {state === 'disabled' && <> {needsAccess ? 'The browser also needs to allow file access before this can work.' : fileAccess ? 'The browser already allows file access.' : ''}</>}
+      {needsAccess && <> {instructions}</>}
+      {' '}Turning this off, or removing the browser permission, stops automatic opening.
+    </span>
+    {needsAccess && settingsUrl && <button className="secondary-button" type="button" onClick={() => onOpenSettings(settingsUrl)}>Open extension settings</button>}
+  </div>;
 }
 
 function ToggleSetting({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (checked: boolean) => void }): ReactElement {

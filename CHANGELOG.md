@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Automatic opening of local Markdown files (`file://`). Opt in under Settings › File handling; the browser must also grant file access (Chromium: **Allow access to file URLs**; Firefox 153+: **Access local files on your computer**). Settings shows the current state and, in Chromium browsers, links to the extension's details page. Only `.md`, `.markdown`, `.mdx`, `.mkd`, `.mkdn`, `.mdown`, and `.mdwn` files that the browser displays as text are redirected.
+- `npm run test:firefox`: a real-Firefox check of local automatic opening over WebDriver BiDi, with no new dependency.
+
 ### Fixed
 
 - Automatic opening did not work in Chromium: a web page could not navigate to `reader.html` because the page was not web-accessible. It is now declared web-accessible (with a dynamic URL in Chromium), and an end-to-end test in an installed Chrome build covers the redirect.
+- Reloading the reader after a website opened it automatically showed a "blocked" page in Chromium (`ERR_BLOCKED_BY_CLIENT`). The reader now replaces its own history entry once, as it does for local files, so reload, back, and forward work.
 - Automatic opening redirected any page whose path ended in `.md`, including HTML pages and rendered GitHub Markdown pages. It now redirects only Markdown media types and plain text at a Markdown path.
 - A stored site with a bad or stale match pattern could remove automatic opening for every site. Registration is now updated in place, and overlapping sync requests run in order.
 - Raw HTML in GitHub-style alert titles could add a remote image or a style element. Titles are now escaped.
@@ -38,8 +44,8 @@
 
 ### Known gaps
 
-- Automatic opening does not cover `file://` addresses.
-- Firefox behavior is checked by build, packaging, and `web-ext lint` only.
+- In Firefox, local files over 4 MB do not open automatically.
+- Firefox runtime is checked for local automatic opening only; other Firefox behavior is checked by build, packaging, and `web-ext lint`.
 - Native permission prompts and the file picker dialog are not automated.
 - Single-key shortcuts cannot be turned off yet.
 
