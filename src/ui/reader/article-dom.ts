@@ -1,4 +1,4 @@
-import { sanitizeSvgElement } from '../../core/markdown';
+import { sanitizeSvgElement } from '../../core/sanitize';
 import type { Appearance } from '../../core/themes';
 
 /**
@@ -17,9 +17,11 @@ async function loadMermaid(appearance: Appearance): Promise<typeof import('merma
       startOnLoad: false,
       securityLevel: 'strict',
       // Documents can carry %%{init}%% directives; none of these may be changed by them.
-      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges', 'suppressErrorRendering', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily', 'look', 'htmlLabels', 'flowchart', 'darkMode', 'dompurifyConfig'],
+      secure: ['secure', 'layout', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges', 'suppressErrorRendering', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily', 'look', 'htmlLabels', 'flowchart', 'darkMode', 'dompurifyConfig'],
       theme: appearance === 'dark' ? 'dark' : 'neutral',
       look: 'classic',
+      // Mermaid 12 defaults to the ELK layout, a 1.4 MB download per first flowchart.
+      layout: 'dagre',
       htmlLabels: false,
       flowchart: { htmlLabels: false },
       suppressErrorRendering: true,
@@ -70,29 +72,105 @@ export async function renderDiagram(element: HTMLElement, appearance: Appearance
   }
 }
 
-/** Highlights every match of `term` and returns the marks in document order. */
-export function markSearchMatches(container: HTMLElement, term: string): HTMLElement[] {
+/** Search stops after this many matches so a one-letter query stays fast in large documents. */
+export const SEARCH_LIMIT = 1000;
+
+export interface DocumentSearch {
+  count: number;
+  /** True when the document has more matches than {@link SEARCH_LIMIT}. */
+  capped: boolean;
+  select(index: number): void;
+  clear(): void;
+}
+
+const searchableText = (container: HTMLElement): TreeWalker => document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+  acceptNode(node) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest('button, script, style, .diagram-placeholder, .code-toolbar, .heading-anchor')) return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;
+  },
+});
+
+const highlightsSupported = (): boolean =>
+  typeof CSS !== 'undefined' && 'highlights' in CSS && typeof (globalThis as { Highlight?: unknown }).Highlight === 'function';
+
+function reveal(element: Element | null): void {
+  element?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+/**
+ * Finds `term` in the document. Where the CSS Custom Highlight API exists, matches are
+ * painted without touching the DOM; elsewhere they are wrapped in <mark> elements.
+ */
+export function searchDocument(container: HTMLElement, term: string): DocumentSearch {
   clearSearchMarks(container);
+  const registry = highlightsSupported() ? (CSS as unknown as { highlights: Map<string, unknown> }).highlights : undefined;
+  registry?.delete('reader-search');
+  registry?.delete('reader-search-current');
   const needle = term.trim().toLocaleLowerCase();
-  if (!needle) return [];
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent || parent.closest('button, script, style, .diagram-placeholder, .code-toolbar')) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
+  const empty: DocumentSearch = { count: 0, capped: false, select: () => undefined, clear: () => undefined };
+  if (!needle) return empty;
+
+  if (registry) {
+    const HighlightClass = (globalThis as unknown as { Highlight: new (...ranges: Range[]) => unknown }).Highlight;
+    const ranges: Range[] = [];
+    let capped = false;
+    const walker = searchableText(container);
+    outer: while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const lower = node.data.toLocaleLowerCase();
+      for (let index = lower.indexOf(needle); index >= 0; index = lower.indexOf(needle, index + needle.length)) {
+        if (ranges.length >= SEARCH_LIMIT) { capped = true; break outer; }
+        const range = new Range();
+        range.setStart(node, index);
+        range.setEnd(node, index + needle.length);
+        ranges.push(range);
+      }
+    }
+    registry.set('reader-search', new HighlightClass(...ranges));
+    return {
+      count: ranges.length,
+      capped,
+      select(index) {
+        const range = ranges[index];
+        if (!range) return;
+        registry.set('reader-search-current', new HighlightClass(range));
+        reveal(range.startContainer.parentElement);
+      },
+      clear() { registry.delete('reader-search'); registry.delete('reader-search-current'); },
+    };
+  }
+
+  const marks = markSearchMatches(container, needle);
+  return {
+    count: Math.min(marks.length, SEARCH_LIMIT),
+    capped: marks.length > SEARCH_LIMIT,
+    select(index) {
+      marks.forEach((mark, position) => {
+        mark.classList.toggle('is-current', position === index);
+        if (position === index) mark.setAttribute('aria-current', 'true'); else mark.removeAttribute('aria-current');
+      });
+      reveal(marks[index] ?? null);
     },
-  });
+    clear() { clearSearchMarks(container); },
+  };
+}
+
+/** Fallback for browsers without highlights: wraps up to SEARCH_LIMIT + 1 matches in marks. */
+export function markSearchMatches(container: HTMLElement, needle: string): HTMLElement[] {
   const nodes: Text[] = [];
-  while (walker.nextNode()) if (walker.currentNode instanceof Text) nodes.push(walker.currentNode);
+  const walker = searchableText(container);
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
   const matches: HTMLElement[] = [];
   for (const node of nodes) {
+    if (matches.length > SEARCH_LIMIT) break;
     const value = node.data;
     const lower = value.toLocaleLowerCase();
-    let offset = 0;
     let index = lower.indexOf(needle);
     if (index < 0) continue;
+    let offset = 0;
     const fragment = document.createDocumentFragment();
-    while (index >= 0) {
+    while (index >= 0 && matches.length <= SEARCH_LIMIT) {
       if (index > offset) fragment.append(value.slice(offset, index));
       const mark = document.createElement('mark');
       mark.className = 'search-hit';
@@ -112,6 +190,7 @@ export function clearSearchMarks(container: HTMLElement): void {
   const marks = container.querySelectorAll('mark.search-hit');
   if (marks.length === 0) return;
   marks.forEach((mark) => mark.replaceWith(document.createTextNode(mark.textContent ?? '')));
+  // Rejoin the text nodes, or a later search would miss matches split across them.
   container.normalize();
 }
 
@@ -153,13 +232,8 @@ export function addCodeLines(code: HTMLElement): void {
   code.dataset.lineMarkup = 'true';
 }
 
-function decodedCode(button: HTMLElement, pre: HTMLElement): string {
-  try {
-    return decodeURIComponent(button.dataset.code ?? '');
-  } catch {
-    return pre.querySelector('code')?.textContent ?? '';
-  }
-}
+/** The code exactly as written: line-number markup adds no text. */
+const codeText = (pre: HTMLElement): string => pre.querySelector('code')?.textContent ?? '';
 
 /** Handles the copy, wrap, collapse, and download buttons of a code block. */
 export function runCodeAction(button: HTMLButtonElement, notify: (message: string) => void): void {
@@ -168,7 +242,7 @@ export function runCodeAction(button: HTMLButtonElement, notify: (message: strin
   const action = button.dataset.action;
   if (!block || !pre || !action) return;
   if (action === 'copy-code') {
-    void navigator.clipboard.writeText(decodedCode(button, pre)).then(() => {
+    void navigator.clipboard.writeText(codeText(pre)).then(() => {
       button.textContent = 'Copied';
       window.setTimeout(() => { button.textContent = 'Copy'; }, 1400);
     }).catch(() => notify('The clipboard is unavailable. Select the code and copy it with your browser.'));
@@ -183,7 +257,7 @@ export function runCodeAction(button: HTMLButtonElement, notify: (message: strin
     button.textContent = expanded ? 'Expand' : 'Collapse';
   } else if (action === 'download-code') {
     const extension = (button.dataset.language || 'txt').toLowerCase().replace(/[^a-z0-9]+/gu, '').slice(0, 10) || 'txt';
-    const url = URL.createObjectURL(new Blob([decodedCode(button, pre)], { type: 'text/plain;charset=utf-8' }));
+    const url = URL.createObjectURL(new Blob([codeText(pre)], { type: 'text/plain;charset=utf-8' }));
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = `code.${extension}`;

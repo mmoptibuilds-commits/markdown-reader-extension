@@ -132,7 +132,6 @@ body { min-height: 100vh; }
 .font-sans .markdown-body { font-family: var(--font-ui); }
 .font-mono .markdown-body { font-family: var(--font-mono); font-size: calc(var(--reader-font-size, 18px) * .88); }
 .document-content > :first-child { margin-top: 0; }
-.document-content.is-large > * { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .markdown-body :is(h1, h2, h3, h4, h5, h6) { position: relative; color: var(--theme-fg); font-weight: 650; line-height: 1.24; letter-spacing: -.015em; scroll-margin-top: calc(var(--toolbar-height) + var(--controls-height) + 16px); }
 .markdown-body :is(h1, h2, h3, h4, h5, h6):focus { outline: none; }
 .markdown-body :is(h1, h2, h3, h4, h5, h6):focus-visible { outline: var(--focus-ring); outline-offset: 4px; }
@@ -300,6 +299,5 @@ body { min-height: 100vh; }
   .markdown-body a[href^="http"]::after { content: " (" attr(href) ")"; color: #444; font-size: .85em; overflow-wrap: anywhere; }
   .code-block pre, .code-line { white-space: pre-wrap !important; overflow: visible !important; }
   .code-block, .table-scroll { overflow: visible !important; }
-  .document-content.is-large > * { content-visibility: visible; }
   .markdown-body th { position: static; }
 }

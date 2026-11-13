@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import {
   buildHeadingIndex,
   classifyDocument,
-  findTextMatches,
   isSafeLink,
   parseFrontmatter,
   resolveFolderTarget,
@@ -50,7 +50,7 @@ describe('heading index', () => {
 
 describe('frontmatter', () => {
   it('parses YAML metadata without removing the Markdown body', () => {
-    const result = parseFrontmatter('---\ntitle: Field Notes\ntags:\n  - research\n---\n\n# Findings');
+    const result = parseFrontmatter('---\ntitle: Field Notes\ntags:\n  - research\n---\n\n# Findings', parseYaml);
 
     expect(result.metadata).toEqual({ title: 'Field Notes', tags: ['research'] });
     expect(result.body).toBe('\n# Findings');
@@ -59,7 +59,7 @@ describe('frontmatter', () => {
 
   it('leaves malformed frontmatter visible and reports a safe error', () => {
     const source = '---\ntitle: [broken\n---\n\n# Still readable';
-    const result = parseFrontmatter(source);
+    const result = parseFrontmatter(source, parseYaml);
 
     expect(result.body).toBe(source);
     expect(result.metadata).toEqual({});
@@ -67,17 +67,10 @@ describe('frontmatter', () => {
   });
 
   it('does not accept prototype-polluting metadata keys', () => {
-    const result = parseFrontmatter('---\n__proto__:\n  polluted: true\nconstructor: unsafe\ntitle: Safe\n---\nBody');
+    const result = parseFrontmatter('---\n__proto__:\n  polluted: true\nconstructor: unsafe\ntitle: Safe\n---\nBody', parseYaml);
 
     expect(result.metadata).toEqual({ title: 'Safe' });
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
-  });
-});
-
-describe('document search', () => {
-  it('returns case-insensitive, non-overlapping offsets and handles an empty query', () => {
-    expect(findTextMatches('Reader reader READ', 'reader')).toEqual([0, 7]);
-    expect(findTextMatches('anything', '   ')).toEqual([]);
   });
 });
 

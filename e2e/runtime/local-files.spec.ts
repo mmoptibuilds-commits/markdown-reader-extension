@@ -247,8 +247,16 @@ test.describe('automatic opening of local Markdown files in installed Chromium',
     const started = Date.now();
     await openFile(page, localDocs.url('large.md'));
     await page.waitForURL(/reader\.html\?url=/);
-    await expect(readerHeading(page, 'Large document')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('heading', { name: 'Last section' })).toBeAttached({ timeout: 30_000 });
-    test.info().annotations.push({ type: 'large-document-ms', description: String(Date.now() - started) });
+    // Id selectors: role queries recompute accessibility over the whole large page on every poll.
+    await expect(page.locator('#md-large-document')).toBeVisible({ timeout: 30_000 });
+    test.info().annotations.push({ type: 'large-document-first-heading-ms', description: String(Date.now() - started) });
+    await expect(page.locator('#md-last-section')).toBeAttached({ timeout: 60_000 });
+    await expect(page.locator('.document-end')).toBeVisible({ timeout: 60_000 });
+    test.info().annotations.push({ type: 'large-document-complete-ms', description: String(Date.now() - started) });
+    test.info().annotations.push({ type: 'app-render-ms', description: String(await page.evaluate(() => {
+      const [start] = performance.getEntriesByName('markdown-reader:document-start');
+      const [end] = performance.getEntriesByName('markdown-reader:document-complete');
+      return start && end ? Math.round(end.startTime - start.startTime) : -1;
+    })) });
   });
 });

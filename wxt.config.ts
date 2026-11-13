@@ -1,4 +1,21 @@
+import type { AtRule, Plugin } from 'postcss';
 import { defineConfig } from 'wxt';
+
+/**
+ * KaTeX lists woff2, woff, and ttf for every font. Every browser this extension supports
+ * uses woff2, so the other formats are dropped and never copied into the package.
+ */
+const katexWoff2Only: Plugin = {
+  postcssPlugin: 'katex-woff2-only',
+  AtRule: {
+    'font-face': (rule: AtRule) => {
+      rule.walkDecls('src', (declaration) => {
+        if (!declaration.value.includes('KaTeX_')) return;
+        declaration.value = declaration.value.split(/,(?=\s*url\()/u).filter((source) => /\.woff2\b/u.test(source)).join(',');
+      });
+    },
+  },
+};
 
 // Set MARKDOWN_READER_E2E=1 to build the test variant. It grants the local test origin
 // host access so the runtime suite can exercise automatic opening without a native
@@ -12,6 +29,8 @@ const localFileHostPermissions = ['file:///*'];
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  // ES workers can share chunks with the page; the default IIFE format would inline them.
+  vite: () => ({ css: { postcss: { plugins: [katexWoff2Only] } }, worker: { format: 'es' } }),
   manifestVersion: 3,
   outDir: e2eBuild ? '.output-e2e' : '.output',
   manifest: ({ browser }) => ({

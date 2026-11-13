@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactElement } from 'react';
 import { OPENABLE_FILE_ACCEPT, isOpenableFileName } from '../core/document';
-import { renderMarkdown, type RenderedMarkdown } from '../core/markdown';
+import type { PreparedMarkdown } from '../core/markdown';
 import { THEME_IDS } from '../core/settings';
 import { getBookmarks, getReadingPosition, saveReadingPosition, toggleBookmark, type Bookmark } from '../shared/storage';
 import { useSettings } from './hooks/useSettings';
@@ -28,6 +28,7 @@ import { DocumentArticle } from './reader/DocumentArticle';
 import { ReaderSidebar, type SidebarTab } from './reader/ReaderSidebar';
 import { ReadingPanel } from './reader/ReadingPanel';
 import { shortcutFor, SINGLE_KEY_SHORTCUTS } from './reader/shortcuts';
+import { prepareDocument } from './reader/prepare';
 import { useDocumentSource } from './reader/useDocumentSource';
 import { readingStyle, useAppliedTheme } from './theme';
 
@@ -52,7 +53,9 @@ export function ReaderApp(): ReactElement {
   const source = useDocumentSource();
   const { document: activeDocument, folder, problem, setProblem } = source;
 
-  const [rendered, setRendered] = useState<RenderedMarkdown>();
+  const [rendered, setRendered] = useState<PreparedMarkdown>();
+  // True once every slice of the rendered document is in the page.
+  const [contentReady, setContentReady] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [activeHeading, setActiveHeading] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
@@ -63,13 +66,16 @@ export function ReaderApp(): ReactElement {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
   const [searchCount, setSearchCount] = useState(0);
+  const [searchCapped, setSearchCapped] = useState(false);
+  // The term whose results are shown, so a stale count is never presented as current.
+  const [searchedTerm, setSearchedTerm] = useState('');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [images, setImages] = useState<HTMLImageElement[]>([]);
   const [imageIndex, setImageIndex] = useState<number | null>(null);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-  const [progress, setProgress] = useState(0);
+  const progressRef = useRef<HTMLDivElement>(null);
   const [remoteInput, setRemoteInput] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,7 +91,8 @@ export function ReaderApp(): ReactElement {
     if (!activeDocument) { setRendered(undefined); return; }
     let cancelled = false;
     setRendering(true);
-    void renderMarkdown(activeDocument.text, {
+    setContentReady(false);
+    void prepareDocument(activeDocument.text, {
       ...(activeDocument.sourceUrl ? { sourceUrl: activeDocument.sourceUrl } : {}),
       ...(activeDocument.documentPath ? { documentPath: activeDocument.documentPath } : {}),
       ...(folder ? { assetUrls: folder.assets, documentPaths: new Set(folder.files.keys()) } : {}),
@@ -129,24 +136,25 @@ export function ReaderApp(): ReactElement {
   const wordCount = useMemo(() => rendered ? rendered.body.trim().split(/\s+/u).filter(Boolean).length : 0, [rendered]);
   const minutes = Math.max(1, Math.round(wordCount / 230));
 
-  // Reading progress: one state update per frame at most.
+  // Reading progress is drawn directly, at most once per frame, without re-rendering React.
   useEffect(() => {
     let frame = 0;
     const measure = (): void => {
       frame = 0;
       const max = document.documentElement.scrollHeight - window.innerHeight;
-      setProgress(max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0);
+      const value = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+      if (progressRef.current) progressRef.current.style.transform = `scaleX(${value})`;
     };
     const onScroll = (): void => { if (!frame) frame = window.requestAnimationFrame(measure); };
     window.addEventListener('scroll', onScroll, { passive: true });
     measure();
     return () => { window.removeEventListener('scroll', onScroll); if (frame) window.cancelAnimationFrame(frame); };
-  }, [rendered]);
+  }, [rendered, contentReady]);
 
   // Restore the saved position once per document, after it has rendered.
   const restoredFor = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!activeDocument || !rendered || !settings.restorePosition || restoredFor.current === activeDocument.id) return;
+    if (!activeDocument || !rendered || !contentReady || !settings.restorePosition || restoredFor.current === activeDocument.id) return;
     restoredFor.current = activeDocument.id;
     let cancelled = false;
     void getReadingPosition(activeDocument.id).then((position) => {
@@ -155,7 +163,7 @@ export function ReaderApp(): ReactElement {
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeDocument, rendered, settings.restorePosition]);
+  }, [activeDocument, rendered, contentReady, settings.restorePosition]);
 
   useEffect(() => {
     if (!documentId || !settings.restorePosition) return;
@@ -226,8 +234,29 @@ export function ReaderApp(): ReactElement {
     else notify(`Open “${bookmark.documentName}” to go to this bookmark.`, 5000);
   }, [activeDocument?.id, goToHeading, notify]);
 
+  const onSearchResults = useCallback((count: number, capped: boolean, term: string) => {
+    setSearchedTerm(term);
+    setSearchCount(count);
+    setSearchCapped(capped);
+    setSearchIndex((index) => (count ? Math.min(index, count - 1) : 0));
+  }, []);
+  const onContentComplete = useCallback(() => setContentReady(true), []);
+  const onOpenImage = useCallback((list: HTMLImageElement[], index: number) => { setImages(list); setImageIndex(index); }, []);
+  const openFolderPath = source.openFolderPath;
+  const onLocalLink = useCallback((path: string, hash: string) => {
+    void openFolderPath(path).then((opened) => {
+      if (!opened || !hash) return;
+      let id = hash.slice(1);
+      try { id = decodeURIComponent(id); } catch { /* Keep the raw fragment. */ }
+      window.setTimeout(() => goToHeading(id), 200);
+    });
+  }, [goToHeading, openFolderPath]);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const onSidebarPath = useCallback((path: string) => { void openFolderPath(path); if (isNarrow()) setSidebarOpen(false); }, [openFolderPath]);
+
   const chooseFile = useCallback(() => fileInputRef.current?.click(), []);
-  const chooseFolder = useCallback(() => { void source.openDirectoryPicker(() => folderInputRef.current?.click()); }, [source]);
+  const { openDirectoryPicker } = source;
+  const chooseFolder = useCallback(() => { void openDirectoryPicker(() => folderInputRef.current?.click()); }, [openDirectoryPicker]);
   const openUrlDialog = useCallback(() => { setRemoteInput(activeDocument?.kind === 'remote' ? activeDocument.source : ''); setUrlDialogOpen(true); }, [activeDocument]);
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
@@ -328,7 +357,7 @@ export function ReaderApp(): ReactElement {
 
   return <div id="reader" className={`reader-shell font-${settings.fontFamily} code-${settings.codeTheme} ${focusMode ? 'is-focus' : ''} ${sidebarOpen ? 'sidebar-visible' : 'sidebar-hidden'}`} data-appearance={theme.appearance} style={readingStyle(settings)} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
     <a className="skip-link" href="#reader-main">Skip to document</a>
-    <div className="reading-progress" aria-hidden="true" style={{ transform: `scaleX(${progress})` }} />
+    <div ref={progressRef} className="reading-progress" aria-hidden="true" />
     <header className="reader-toolbar">
       <button className="icon-button" type="button" aria-label={sidebarOpen ? 'Hide navigation' : 'Show navigation'} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((value) => !value)}>{sidebarOpen ? <PanelLeftClose size={19} aria-hidden="true" /> : <PanelLeftOpen size={19} aria-hidden="true" />}</button>
       <div className="toolbar-document">
@@ -354,18 +383,18 @@ export function ReaderApp(): ReactElement {
         open={sidebarOpen}
         tab={sidebarTab}
         onTab={setSidebarTab}
-        onClose={() => setSidebarOpen(false)}
+        onClose={closeSidebar}
         headings={rendered?.headings ?? []}
         activeHeading={activeHeading}
         onHeading={goToHeading}
         folder={folder}
         currentPath={activeDocument?.documentPath}
-        onOpenPath={(path) => { void source.openFolderPath(path); if (isNarrow()) setSidebarOpen(false); }}
+        onOpenPath={onSidebarPath}
         onOpenFolder={chooseFolder}
         bookmarks={bookmarks}
         currentDocumentId={activeDocument?.id}
         onBookmark={openBookmark}
-        onRemoveBookmark={(bookmark) => void removeBookmark(bookmark)}
+        onRemoveBookmark={removeBookmark}
       />
       {sidebarOpen && <button className="sidebar-scrim" type="button" tabIndex={-1} aria-hidden="true" onClick={() => setSidebarOpen(false)} />}
 
@@ -418,7 +447,7 @@ export function ReaderApp(): ReactElement {
                 if (event.key === 'Enter' && searchCount) { event.preventDefault(); setSearchIndex((index) => (index + (event.shiftKey ? searchCount - 1 : 1)) % searchCount); }
                 if (event.key === 'Escape') { event.preventDefault(); closeSearch(); }
               }} />
-            <span id="search-count" className="search-count" role="status">{searchTerm.trim() ? (searchCount ? `${Math.min(searchIndex + 1, searchCount)} of ${searchCount}` : 'No matches') : ''}</span>
+            <span id="search-count" className="search-count" role="status">{!searchTerm.trim() ? '' : searchedTerm !== searchTerm ? 'Searching…' : searchCount ? `${Math.min(searchIndex + 1, searchCount)} of ${searchCount}${searchCapped ? '+' : ''}` : 'No matches'}</span>
             <button className="icon-button" type="button" aria-label="Previous match" disabled={!searchCount} onClick={() => setSearchIndex((index) => (index - 1 + searchCount) % searchCount)}><ChevronUp size={17} aria-hidden="true" /></button>
             <button className="icon-button" type="button" aria-label="Next match" disabled={!searchCount} onClick={() => setSearchIndex((index) => (index + 1) % searchCount)}><ChevronDown size={17} aria-hidden="true" /></button>
             <button className="icon-button" type="button" aria-label="Close search" onClick={closeSearch}><X size={17} aria-hidden="true" /></button>
@@ -426,17 +455,18 @@ export function ReaderApp(): ReactElement {
 
           <div className={`document-panes ${viewMode === 'split' ? 'is-split' : ''} ${viewMode === 'source' ? 'is-source' : ''}`}>
             {showRendered && <DocumentArticle
-              rendered={rendered}
+              prepared={rendered}
               label={activeDocument.name}
               appearance={theme.appearance}
               showLineNumbers={settings.showLineNumbers}
               searchTerm={searchOpen ? searchTerm : ''}
               searchIndex={searchIndex}
               wordCount={wordCount}
-              onSearchResults={(count) => { setSearchCount(count); setSearchIndex((index) => (count ? Math.min(index, count - 1) : 0)); }}
+              onSearchResults={onSearchResults}
+              onComplete={onContentComplete}
               onActiveHeading={setActiveHeading}
-              onOpenImage={(list, index) => { setImages(list); setImageIndex(index); }}
-              onLocalLink={(path, hash) => { void source.openFolderPath(path).then((opened) => { if (opened && hash) window.setTimeout(() => goToHeading(decodeURIComponent(hash.slice(1))), 200); }); }}
+              onOpenImage={onOpenImage}
+              onLocalLink={onLocalLink}
               notify={notify}
             />}
             {showSource && <pre className="raw-source" tabIndex={0} aria-label="Markdown source"><code>{activeDocument.text}</code></pre>}

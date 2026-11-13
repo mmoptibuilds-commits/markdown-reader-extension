@@ -60,5 +60,10 @@
     "jsdom": "^27.2.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "mermaid": {
+      "katex": "$katex"
+    }
   }
 }

@@ -1,20 +1,23 @@
-import { memo, useEffect, useRef, type ReactElement } from 'react';
-import type { RenderedMarkdown } from '../../core/markdown';
+import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react';
+import type { PreparedMarkdown } from '../../core/markdown';
+import { sanitizeBlockToFragment } from '../../core/sanitize';
 import type { Appearance } from '../../core/themes';
-import { addCodeLines, clearSearchMarks, markSearchMatches, renderDiagram, runCodeAction } from './article-dom';
+import { addCodeLines, renderDiagram, runCodeAction, searchDocument, type DocumentSearch } from './article-dom';
 
 export interface DocumentArticleProps {
-  rendered: RenderedMarkdown;
+  prepared: PreparedMarkdown;
   label: string;
   appearance: Appearance;
   showLineNumbers: boolean;
   searchTerm: string;
   searchIndex: number;
   wordCount: number;
-  onSearchResults: (count: number) => void;
+  onSearchResults: (count: number, capped: boolean, term: string) => void;
   onActiveHeading: (id: string) => void;
   onOpenImage: (images: HTMLImageElement[], index: number) => void;
   onLocalLink: (path: string, hash: string) => void;
+  /** Called once every slice of the document is in the page. */
+  onComplete: () => void;
   notify: (message: string) => void;
 }
 
@@ -22,21 +25,75 @@ const scrollBehavior = (): ScrollBehavior =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 
 /**
- * The rendered document. The sanitized HTML lives in its own container; every imperative
- * enhancement (diagrams, code lines and actions, search marks, image viewer) is confined
- * to that container and attached once the container exists.
+ * Yields to the browser between slices so input and painting are handled. A message
+ * channel is used rather than idle callbacks or timers, which background tabs throttle.
+ */
+const nextIdle = (run: () => void): (() => void) => {
+  const channel = new MessageChannel();
+  let cancelled = false;
+  channel.port1.onmessage = () => { channel.port1.close(); if (!cancelled) run(); };
+  channel.port2.postMessage(undefined);
+  return () => { cancelled = true; channel.port1.close(); };
+};
+
+/**
+ * The rendered document. Slices are sanitized and inserted one after another, so the
+ * first screen appears at once even for very large files. Every imperative enhancement
+ * (diagrams, code lines and actions, search, image viewer) is confined to the container
+ * that holds the sanitized HTML, and attached once the whole document is present.
  */
 export const DocumentArticle = memo(function DocumentArticle(props: DocumentArticleProps): ReactElement {
-  const { rendered, appearance, showLineNumbers, searchTerm, searchIndex } = props;
+  const { prepared, appearance, showLineNumbers, searchTerm, searchIndex } = props;
   const contentRef = useRef<HTMLDivElement>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
-  const matches = useRef<HTMLElement[]>([]);
+  const [complete, setComplete] = useState(false);
+  const search = useRef<DocumentSearch | undefined>(undefined);
+
+  // Insert the first slice before paint, the rest when the browser is idle.
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    setComplete(false);
+    content.replaceChildren();
+    let index = 0;
+    let cancel: (() => void) | undefined;
+    // Slices are sanitized in short idle steps but added to the page in batches that double
+    // in size, so the growing document is laid out a logarithmic number of times.
+    let pending = document.createDocumentFragment();
+    let pendingSlices = 0;
+    let insertedSlices = 0;
+    const flush = (): void => {
+      content.append(pending);
+      insertedSlices += pendingSlices;
+      pending = document.createDocumentFragment();
+      pendingSlices = 0;
+    };
+    const insert = (budgetMs: number): void => {
+      const started = performance.now();
+      do {
+        const block = prepared.blocks[index];
+        if (block !== undefined) { pending.append(sanitizeBlockToFragment(block)); pendingSlices += 1; }
+        index += 1;
+      } while (index < prepared.blocks.length && performance.now() - started < budgetMs);
+      const done = index >= prepared.blocks.length;
+      if (done || insertedSlices === 0 || pendingSlices >= Math.max(4, insertedSlices)) flush();
+      if (!done) cancel = nextIdle(() => insert(40));
+      else {
+        performance.mark('markdown-reader:document-complete');
+        setComplete(true);
+        callbacks.current.onComplete();
+      }
+    };
+    performance.mark('markdown-reader:document-start');
+    insert(30);
+    return () => cancel?.();
+  }, [prepared]);
 
   // Diagrams render when they come near the viewport, and again if the appearance changes.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content) return;
+    if (!content || !complete) return;
     const nodes = [...content.querySelectorAll<HTMLElement>('[data-diagram]')];
     if (nodes.length === 0) return;
     const controller = new AbortController();
@@ -49,18 +106,18 @@ export const DocumentArticle = memo(function DocumentArticle(props: DocumentArti
     }, { rootMargin: '320px 0px' });
     nodes.forEach((node) => observer.observe(node));
     return () => { controller.abort(); observer.disconnect(); };
-  }, [rendered, appearance]);
+  }, [complete, prepared, appearance]);
 
   useEffect(() => {
     const content = contentRef.current;
-    if (!content || !showLineNumbers) return;
+    if (!content || !complete || !showLineNumbers) return;
     content.querySelectorAll<HTMLElement>('.code-block code').forEach(addCodeLines);
-  }, [rendered, showLineNumbers]);
+  }, [complete, prepared, showLineNumbers]);
 
   // The heading nearest the top of the viewport is the "current" one for outline and bookmarks.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content) return;
+    if (!content || !complete) return;
     const headings = [...content.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]')];
     headings.forEach((heading) => { heading.tabIndex = -1; });
     if (headings.length === 0) return;
@@ -70,18 +127,13 @@ export const DocumentArticle = memo(function DocumentArticle(props: DocumentArti
     }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
     headings.forEach((heading) => observer.observe(heading));
     return () => observer.disconnect();
-  }, [rendered]);
+  }, [complete, prepared]);
 
-  // Images open in the viewer by click or keyboard.
+  // One delegated listener handles images, code actions, and links, even before the last slice.
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
     const images = (): HTMLImageElement[] => [...content.querySelectorAll<HTMLImageElement>('img.reader-image')];
-    for (const image of images()) {
-      image.tabIndex = 0;
-      image.setAttribute('role', 'button');
-      image.setAttribute('aria-label', `View image${image.alt ? `: ${image.alt}` : ''}`);
-    }
     const open = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLImageElement) || !target.matches('.reader-image')) return false;
       const list = images();
@@ -96,19 +148,22 @@ export const DocumentArticle = memo(function DocumentArticle(props: DocumentArti
       if (button) { runCodeAction(button, callbacks.current.notify); return; }
       const anchor = target.closest<HTMLAnchorElement>('a');
       if (!anchor) return;
+      const href = anchor.getAttribute('href') ?? '';
       if (anchor.dataset.localPath) {
         event.preventDefault();
         callbacks.current.onLocalLink(anchor.dataset.localPath, new URL(anchor.href).hash);
-      } else if (anchor.getAttribute('href') === '#invalid-link') {
+      } else if (href === '#invalid-link') {
         event.preventDefault();
         callbacks.current.notify('This link points to a file next to the document. Open the folder that contains it to follow relative links.');
-      } else if (anchor.hash && anchor.getAttribute('href')?.startsWith('#')) {
-        const heading = content.querySelector<HTMLElement>(`[id="${CSS.escape(decodeURIComponent(anchor.hash.slice(1)))}"]`);
+      } else if (href.startsWith('#')) {
+        let id = href.slice(1);
+        try { id = decodeURIComponent(id); } catch { /* Keep the raw fragment. */ }
+        const heading = content.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`);
         if (heading) {
           event.preventDefault();
           heading.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
           heading.focus({ preventScroll: true });
-          history.replaceState(null, '', anchor.hash);
+          history.replaceState(history.state, '', `${location.pathname}${location.search}${href}`);
         }
       }
     };
@@ -118,36 +173,39 @@ export const DocumentArticle = memo(function DocumentArticle(props: DocumentArti
     content.addEventListener('click', onClick);
     content.addEventListener('keydown', onKey);
     return () => { content.removeEventListener('click', onClick); content.removeEventListener('keydown', onKey); };
-  }, [rendered]);
+  }, []);
 
-  // Marking runs when the term or document changes; moving between matches only moves a class.
   useEffect(() => {
     const content = contentRef.current;
-    if (!content) return;
-    const timer = window.setTimeout(() => {
-      matches.current = markSearchMatches(content, searchTerm);
-      callbacks.current.onSearchResults(matches.current.length);
-    }, searchTerm.length > 2 ? 0 : 120);
-    return () => window.clearTimeout(timer);
-  }, [rendered, searchTerm]);
+    if (!content || !complete) return;
+    for (const image of content.querySelectorAll<HTMLImageElement>('img.reader-image')) {
+      image.tabIndex = 0;
+      image.setAttribute('role', 'button');
+      image.setAttribute('aria-label', `View image${image.alt ? `: ${image.alt}` : ''}`);
+    }
+  }, [complete, prepared]);
 
-  useEffect(() => () => { if (contentRef.current) clearSearchMarks(contentRef.current); }, []);
-
+  // Searching runs when the term or document changes; moving between matches only repaints.
   useEffect(() => {
-    const list = matches.current;
-    list.forEach((mark, index) => {
-      const current = index === searchIndex;
-      mark.classList.toggle('is-current', current);
-      if (current) mark.setAttribute('aria-current', 'true'); else mark.removeAttribute('aria-current');
-    });
-    list[searchIndex]?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
-  }, [searchIndex, searchTerm, rendered]);
+    const content = contentRef.current;
+    if (!content || !complete) return;
+    const timer = window.setTimeout(() => {
+      search.current?.clear();
+      search.current = searchDocument(content, searchTerm);
+      if (search.current.count) search.current.select(Math.min(callbacks.current.searchIndex, search.current.count - 1));
+      callbacks.current.onSearchResults(search.current.count, search.current.capped, searchTerm);
+    }, searchTerm.trim().length > 2 ? 60 : 180);
+    return () => window.clearTimeout(timer);
+  }, [complete, prepared, searchTerm]);
 
-  const metadata = Object.entries(rendered.metadata);
-  return <article className={`markdown-body ${showLineNumbers ? 'has-line-numbers' : ''}`} aria-label={props.label}>
+  useEffect(() => { search.current?.select(searchIndex); }, [searchIndex, searchTerm, complete]);
+  useEffect(() => () => search.current?.clear(), []);
+
+  const metadata = Object.entries(prepared.metadata);
+  return <article className={`markdown-body ${showLineNumbers ? 'has-line-numbers' : ''}`} aria-label={props.label} aria-busy={!complete}>
     {metadata.length > 0 && <details className="frontmatter"><summary>Document details</summary><dl>{metadata.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl></details>}
-    {rendered.frontmatterError && <p className="inline-notice" role="note">{rendered.frontmatterError}</p>}
-    <div ref={contentRef} className="document-content" dangerouslySetInnerHTML={{ __html: rendered.html }} />
-    <footer className="document-end"><span>End of document</span><span>{props.wordCount.toLocaleString()} words</span></footer>
+    {prepared.frontmatterError && <p className="inline-notice" role="note">{prepared.frontmatterError}</p>}
+    <div ref={contentRef} className="document-content" />
+    {complete && <footer className="document-end"><span>End of document</span><span>{props.wordCount.toLocaleString()} words</span></footer>}
   </article>;
 });

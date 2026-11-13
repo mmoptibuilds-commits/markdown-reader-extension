@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, sanitizeSvg, sanitizeSvgElement } from './markdown';
+import { prepareMarkdown, renderMarkdown } from './markdown';
+import { sanitizeBlock, sanitizeSvg, sanitizeSvgElement } from './sanitize';
 
 describe('renderMarkdown', () => {
   it('renders common GFM constructs and an outline', async () => {
@@ -172,5 +173,35 @@ describe('links and images without a safe destination', () => {
   it('sends no referrer with remote images', async () => {
     const result = await renderMarkdown('![Logo](https://images.example.test/logo.png)', { allowRemoteImages: true });
     expect(result.html).toContain('referrerpolicy="no-referrer"');
+  });
+});
+
+describe('progressive rendering', () => {
+  it('splits a large document into slices of whole blocks that sanitize to the same HTML', async () => {
+    const source = Array.from({ length: 400 }, (_, index) => `## Part ${index}\n\n${'Text with **bold** and `code`. '.repeat(20)}\n\n| a | b |\n| - | - |\n| ${index} | x |\n\n- item\n  - nested\n\n> quote[^${index}]\n\n[^${index}]: Note ${index}.`).join('\n\n');
+    const prepared = await prepareMarkdown(source);
+    expect(prepared.blocks.length).toBeGreaterThan(3);
+    const whole = await renderMarkdown(source);
+    expect(prepared.blocks.map(sanitizeBlock).join('')).toBe(whole.html);
+    for (const block of prepared.blocks) {
+      // Every slice is balanced: sanitizing it alone keeps every element it opened.
+      expect(sanitizeBlock(block).match(/<table/gu)?.length ?? 0).toBe(block.match(/<table/gu)?.length ?? 0);
+      expect(sanitizeBlock(block).match(/<\/ul>/gu)?.length ?? 0).toBe(block.match(/<\/ul>/gu)?.length ?? 0);
+    }
+    expect(whole.html).toContain('class="footnotes');
+  });
+
+  it('keeps a small document in one slice and still reads frontmatter', async () => {
+    const prepared = await prepareMarkdown('---\ntitle: Small\n---\n# Hello\n\nBody.');
+    expect(prepared.blocks).toHaveLength(1);
+    expect(prepared.metadata).toEqual({ title: 'Small' });
+    expect(prepared.headings.map(({ text }) => text)).toEqual(['Hello']);
+  });
+
+  it('renders code blocks once, without duplicated source in attributes', async () => {
+    const { html } = await renderMarkdown('```js\nconst a = "<b>";\n```');
+    expect(html).not.toContain('data-code=');
+    expect(html.match(/const/gu)).toHaveLength(1);
+    expect(html).toContain('role="group"');
   });
 });

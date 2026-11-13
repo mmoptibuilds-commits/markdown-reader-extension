@@ -1,6 +1,5 @@
 import MarkdownIt, { type Env, type MarkdownIt as MarkdownItInstance, type Token } from 'markdown-it';
 import type { StateBlock, StateInline } from 'markdown-it';
-import DOMPurify from 'dompurify';
 import markdownItAbbr from 'markdown-it-abbr';
 import markdownItContainer from 'markdown-it-container';
 import markdownItDeflist from 'markdown-it-deflist';
@@ -16,6 +15,7 @@ import markdownItTaskLists from 'markdown-it-task-lists';
 import type { HLJSApi, LanguageFn } from 'highlight.js';
 import {
   buildHeadingIndex,
+  hasFrontmatter,
   isSafeLink,
   parseFrontmatter,
   resolveFolderTarget,
@@ -23,7 +23,7 @@ import {
   type Heading,
   type HeadingDraft,
 } from './document';
-import { cssCanFetch } from './css-safety';
+import { sanitizeBlock } from './sanitize';
 
 export interface RenderMarkdownOptions {
   sourceUrl?: string;
@@ -31,6 +31,17 @@ export interface RenderMarkdownOptions {
   assetUrls?: ReadonlyMap<string, string>;
   documentPaths?: ReadonlySet<string>;
   allowRemoteImages?: boolean;
+}
+
+/** A document parsed and rendered, but not yet sanitized: insert blocks only through {@link sanitizeBlock}. */
+export interface PreparedMarkdown {
+  source: string;
+  body: string;
+  /** Rendered HTML in slices of whole top-level blocks, so large documents can be inserted progressively. */
+  blocks: string[];
+  headings: Heading[];
+  metadata: Record<string, unknown>;
+  frontmatterError?: string;
 }
 
 export interface RenderedMarkdown {
@@ -368,15 +379,14 @@ function createMarkdownIt(environment: MarkdownEnvironment): MarkdownItInstance 
     const className = kind ? `language-${languageLabel(normalizeLanguage(info))}` : 'language-plaintext';
     const code = highlightCode(token.content, info, (rawEnvironment as unknown as MarkdownEnvironment).highlighter);
     const escapedLabel = escapeHtml(language);
-    const encodedCode = encodeURIComponent(token.content);
-    return `<figure class="code-block" data-code-block><figcaption class="code-toolbar"><span class="code-language">${escapedLabel}</span><span class="code-actions"><button type="button" data-action="copy-code" data-code="${encodedCode}" aria-label="Copy ${escapedLabel} code">Copy</button><button type="button" data-action="wrap-code" aria-pressed="false">Wrap</button><button type="button" data-action="collapse-code" aria-expanded="true">Collapse</button><button type="button" data-action="download-code" data-language="${escapeHtml(languageLabel(kind || 'txt'))}" data-code="${encodedCode}" aria-label="Download ${escapedLabel} code">Download</button></span></figcaption><pre><code class="hljs ${escapeHtml(className)}">${code}</code></pre></figure>\n`;
+    return `<div class="code-block" data-code-block role="group" aria-label="${escapedLabel} code"><div class="code-toolbar"><span class="code-language" aria-hidden="true">${escapedLabel}</span><span class="code-actions"><button type="button" data-action="copy-code">Copy</button><button type="button" data-action="wrap-code" aria-pressed="false">Wrap</button><button type="button" data-action="collapse-code" aria-expanded="true">Collapse</button><button type="button" data-action="download-code" data-language="${escapeHtml(languageLabel(kind || 'txt'))}">Download</button></span></div><pre tabindex="0"><code class="hljs ${escapeHtml(className)}">${code}</code></pre></div>\n`;
   };
 
   markdown.renderer.rules.code_block = (tokens, index) => {
     const token = tokens[index];
     if (!token) return '';
     const code = escapeHtml(token.content);
-    return `<figure class="code-block" data-code-block><figcaption class="code-toolbar"><span class="code-language">Text</span><span class="code-actions"><button type="button" data-action="copy-code" data-code="${encodeURIComponent(token.content)}" aria-label="Copy code">Copy</button><button type="button" data-action="wrap-code" aria-pressed="false">Wrap</button><button type="button" data-action="collapse-code" aria-expanded="true">Collapse</button><button type="button" data-action="download-code" data-language="txt" data-code="${encodeURIComponent(token.content)}" aria-label="Download code">Download</button></span></figcaption><pre><code class="hljs language-plaintext">${code}</code></pre></figure>\n`;
+    return `<div class="code-block" data-code-block role="group" aria-label="Text"><div class="code-toolbar"><span class="code-language" aria-hidden="true">Text</span><span class="code-actions"><button type="button" data-action="copy-code">Copy</button><button type="button" data-action="wrap-code" aria-pressed="false">Wrap</button><button type="button" data-action="collapse-code" aria-expanded="true">Collapse</button><button type="button" data-action="download-code" data-language="txt">Download</button></span></div><pre tabindex="0"><code class="hljs language-plaintext">${code}</code></pre></div>\n`;
   };
 
   markdown.renderer.rules.image = (tokens, index) => {
@@ -495,55 +505,32 @@ function addHeadingsToTokens(tokens: Token[], headings: Heading[]): Map<string, 
   return aliases;
 }
 
-function buildRenderedHtml(rawHtml: string): string {
-  return DOMPurify.sanitize(rawHtml, {
-    USE_PROFILES: { html: true, mathMl: true, svg: true },
-    ALLOW_DATA_ATTR: true,
-    ALLOW_ARIA_ATTR: true,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|(?:[^a-z+.-]|[a-z+.-]+(?:[^a-z+.\-:]|$)))/iu,
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
-    ADD_ATTR: ['referrerpolicy'],
-  });
-}
+const BLOCK_SLICE_CHARS = 48_000;
 
 /**
- * Sanitizes diagram SVG and returns the parsed root, ready to insert without reparsing.
- * Event handlers, scripts, foreign content, external references, and any CSS that could
- * fetch a resource are removed.
+ * Renders top-level blocks one at a time and groups them into slices of about
+ * {@link BLOCK_SLICE_CHARS}. Each slice is balanced HTML, so it can be sanitized alone.
  */
-export function sanitizeSvgElement(svg: string): SVGSVGElement | undefined {
-  if (svg.length > 4_000_000) return undefined;
-  const safeSvg = DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
-  });
-  const parsed = new DOMParser().parseFromString(safeSvg, 'image/svg+xml');
-  const root = parsed.documentElement;
-  if (root.localName !== 'svg' || parsed.querySelector('parsererror')) return undefined;
-
-  for (const element of [root, ...root.querySelectorAll('*')]) {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim();
-      const externalReference = (name === 'href' || name.endsWith(':href')) && value !== '' && !value.startsWith('#');
-      if (name === 'xml:base' || externalReference || ((name === 'style' || /url\s*\(/iu.test(value)) && cssCanFetch(value))) {
-        element.removeAttribute(attribute.name);
-      }
-    }
+function renderSlices(markdown: MarkdownItInstance, tokens: Token[], environment: MarkdownEnvironment): string[] {
+  const slices: string[] = [];
+  let current = '';
+  let start = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token || token.level !== 0 || token.nesting === 1) continue;
+    current += markdown.renderer.render(tokens.slice(start, index + 1), markdown.options, environment as unknown as Env);
+    start = index + 1;
+    if (current.length >= BLOCK_SLICE_CHARS) { slices.push(current); current = ''; }
   }
-  for (const style of root.querySelectorAll('style')) {
-    if (cssCanFetch(style.textContent ?? '')) style.remove();
-  }
-  return root as unknown as SVGSVGElement;
+  if (start < tokens.length) current += markdown.renderer.render(tokens.slice(start), markdown.options, environment as unknown as Env);
+  if (current || slices.length === 0) slices.push(current);
+  return slices;
 }
 
-export function sanitizeSvg(svg: string): string {
-  const element = sanitizeSvgElement(svg);
-  return element ? new XMLSerializer().serializeToString(element) : '';
-}
-
-export async function renderMarkdown(source: string, options: RenderMarkdownOptions = {}): Promise<RenderedMarkdown> {
-  const frontmatter = parseFrontmatter(source);
+/** Parses and renders a document. The result must be sanitized block by block before display. */
+export async function prepareMarkdown(source: string, options: RenderMarkdownOptions = {}): Promise<PreparedMarkdown> {
+  const parseYaml = hasFrontmatter(source) ? (await import('yaml')).parse : undefined;
+  const frontmatter = parseYaml ? parseFrontmatter(source, parseYaml) : { body: source, metadata: {} };
   const languages = fencedLanguages(frontmatter.body);
   const needsMath = /\$(?:[^\s$][^$\n]*[^\s$]|[^\s$])\$|^\s*(?:\$\$|\\\[)/mu.test(frontmatter.body);
   const [highlighter, katex] = await Promise.all([
@@ -561,19 +548,15 @@ export async function renderMarkdown(source: string, options: RenderMarkdownOpti
   const markdown = createMarkdownIt(environment);
   const tokens = markdown.parse(frontmatter.body, environment);
   const headings = buildHeadingIndex(extractHeadingDrafts(tokens));
-  const headingAliases = addHeadingsToTokens(tokens, headings);
   environment.headings = headings;
-  environment.headingAliases = headingAliases;
+  environment.headingAliases = addHeadingsToTokens(tokens, headings);
 
-  const rendered = markdown.renderer.render(tokens, markdown.options, environment);
-  const html = buildRenderedHtml(rendered);
-  const base = {
-    source,
-    body: frontmatter.body,
-    html,
-    headings,
-    metadata: frontmatter.metadata,
-  };
-  return frontmatter.error ? { ...base, frontmatterError: frontmatter.error } : base;
+  const prepared: PreparedMarkdown = { source, body: frontmatter.body, blocks: renderSlices(markdown, tokens, environment), headings, metadata: frontmatter.metadata };
+  return 'error' in frontmatter && frontmatter.error ? { ...prepared, frontmatterError: frontmatter.error } : prepared;
 }
 
+/** Renders and sanitizes a whole document at once. */
+export async function renderMarkdown(source: string, options: RenderMarkdownOptions = {}): Promise<RenderedMarkdown> {
+  const { blocks, ...rest } = await prepareMarkdown(source, options);
+  return { ...rest, html: blocks.map(sanitizeBlock).join('') };
+}
