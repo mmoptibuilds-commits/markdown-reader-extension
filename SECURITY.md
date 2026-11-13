@@ -43,6 +43,7 @@ Automatic opening sends a top-level Markdown document to the reader. It works as
 2. The background worker registers one content script, `content-scripts/auto-render.js`, for the granted origins only. It re-syncs on install, startup, and permission removal, and it never registers an origin the browser no longer grants.
 3. The content script runs at `document_start` in the top frame only. It redirects only when the document's media type is a Markdown type, or when it is `text/plain` and the path names a Markdown extension. HTML pages, URLs with embedded credentials, and frames are never redirected.
 4. The redirect uses `location.replace()`, so the original URL is not kept in history. The reader receives the original URL, including query and fragment, and fetches it again under the same permission and limits as any remote document.
+5. The reader replaces its own history entry once, adding `settled=1`, because Chromium blocks reloading an entry created by a page's redirect to the dynamic web-accessible URL. The replacement keeps the same address and parameters and loads nothing new.
 
 The redirect requires `reader.html` to be web-accessible. Chromium blocks a page from navigating to an extension page that is not web-accessible. This was verified against Chrome for Testing 153: navigation to `chrome-extension://…/reader.html` was blocked with `ERR_BLOCKED_BY_CLIENT`, and after the change the same navigation opens the reader. The manifest therefore declares:
 
@@ -116,7 +117,6 @@ These are known and not yet fixed:
 - SVG output is filtered with literal patterns for `url(`. CSS escape sequences such as `u\72l(` are not decoded before that check. Browser effect not verified; treat as a hardening item.
 - YAML frontmatter aliases are bounded by count and depth, but shared anchors are not memoized, so a crafted document could still cost more time than its size suggests.
 - Firefox runtime behavior of the remote permission, redirect, and web-accessible paths has not been tested in Firefox. The local-file path has been (Firefox 160).
-- Reloading the reader after a website was opened automatically shows a "blocked" page in Chromium (`use_dynamic_url` entry created by a web redirect). Found 2026-11-13 while testing local files, which work around it with the `settled` replace. Not fixed for remote documents.
 
 ## Reporting a security issue
 

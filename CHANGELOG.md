@@ -10,6 +10,7 @@
 ### Fixed
 
 - Automatic opening did not work in Chromium: a web page could not navigate to `reader.html` because the page was not web-accessible. It is now declared web-accessible (with a dynamic URL in Chromium), and an end-to-end test in an installed Chrome build covers the redirect.
+- Reloading the reader after a website opened it automatically showed a "blocked" page in Chromium (`ERR_BLOCKED_BY_CLIENT`). The reader now replaces its own history entry once, as it does for local files, so reload, back, and forward work.
 - Automatic opening redirected any page whose path ended in `.md`, including HTML pages and rendered GitHub Markdown pages. It now redirects only Markdown media types and plain text at a Markdown path.
 - A stored site with a bad or stale match pattern could remove automatic opening for every site. Registration is now updated in place, and overlapping sync requests run in order.
 - Raw HTML in GitHub-style alert titles could add a remote image or a style element. Titles are now escaped.
@@ -43,7 +44,6 @@
 
 ### Known gaps
 
-- Reloading the reader after a website opened it automatically shows a "blocked" page in Chromium (found while testing local files; not fixed here).
 - In Firefox, local files over 4 MB do not open automatically.
 - Firefox runtime is checked for local automatic opening only; other Firefox behavior is checked by build, packaging, and `web-ext lint`.
 - Native permission prompts and the file picker dialog are not automated.

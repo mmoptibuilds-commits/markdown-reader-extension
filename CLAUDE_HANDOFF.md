@@ -57,10 +57,10 @@ Design: user opt-in (`autoOpenLocalFiles`) plus browser file access, checked in 
 - The production manifest briefly requested all-sites host permissions because of runtime-registered `matches`. Fixed: the production manifest has no `host_permissions`.
 - Settings writes from the popup could overwrite options-page changes. Patches now merge.
 - Reader Reload loaded the URL-field text instead of the open document.
+- Reloading the reader after remote automatic opening showed a "blocked" page in Chromium. The reader's one-time `settled` replace now covers HTTP(S) launches as well as local files.
 
 ## Open items
 
-- Reloading the reader after *remote* automatic opening shows a "blocked" page in Chromium (dynamic web-accessible URL). Local files avoid it with a one-time `settled` replace; remote does not yet.
 - Local automatic opening in Firefox: files over 4 MB, and files reopened after a browser restart, need Open file. Chromium on Linux downloads `.mdx` rather than displaying it.
 - A redirect to another site sends that site one request before the origin check. See SECURITY.md.
 - `reader.html` is reachable from web pages by design (for automatic opening). See SECURITY.md.

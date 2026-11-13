@@ -32,7 +32,7 @@ See TESTING.md "Local file automatic opening (2026-11-13)": 169 unit tests, 27 P
 
 ## Open issues
 
-- Remote automatic opening: reload of the reader shows a "blocked" page in Chromium.
+- Remote automatic opening: reload of the reader shows a "blocked" page in Chromium. Resolved 2026-11-13: the `settled` replace now covers HTTP(S) launches.
 - Firefox: files over 4 MB and files reopened after a browser restart need Open file.
 - `.mdx` is downloaded rather than displayed by Chromium on the test machine (OS MIME database).
 - Not tested: Edge, Vivaldi, branded Chrome, macOS, Windows, Firefox before 153, signed Firefox installs.

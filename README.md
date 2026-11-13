@@ -123,7 +123,6 @@ Inside the reader, Ctrl/Command+F searches, Ctrl/Command+K opens the command pal
 
 - MDX is treated as Markdown-compatible text; JSX and imports are never evaluated. `.txt` files are accepted only when opened explicitly.
 - Automatic opening covers only sites you enable one at a time, plus local files when you opt in and the browser grants file access. See "Local Markdown files" above for browser-specific limits.
-- Reloading the reader after a *website* opened it automatically shows a "blocked" page in Chromium. Local-file opening is not affected. See SECURITY.md "Open items".
 - Local relative image resolution is available when the parent folder is selected. A lone file picker cannot grant access to neighboring assets.
 - Folder contents are session-only, limited to 2,500 files, and cannot be watched for filesystem changes. Live reload applies to remote documents, not local files.
 - Reopening a local file or captured page from Recents or a bookmark requires the user to open that source again. The extension does not retain local file handles or page contents.
