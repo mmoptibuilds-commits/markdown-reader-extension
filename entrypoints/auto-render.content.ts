@@ -25,14 +25,15 @@ async function requestReader(text?: string): Promise<OpenResult> {
 }
 
 /**
- * A small notice above the browser's plain-text view. It uses a closed shadow root and
- * plain text, loads nothing, and appears only on documents automatic opening applies to.
+ * A small notice above the browser's plain-text view. A shadow root keeps page styles off
+ * it; it holds plain text only, loads nothing, and appears only on documents automatic
+ * opening applies to.
  */
 function showNotice(message: string, action?: { label: string; run: () => Promise<OpenResult> }): void {
   document.getElementById('markdown-reader-notice')?.remove();
   const host = document.createElement('div');
   host.id = 'markdown-reader-notice';
-  const root = host.attachShadow({ mode: 'closed' });
+  const root = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
   style.textContent = `:host{all:initial;display:block;position:sticky;top:0;z-index:2147483647}
     div{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 14px;border-bottom:1px solid #b9c2b9;background:#f3f5f1;color:#1f2a22;font:14px/1.4 system-ui,sans-serif}

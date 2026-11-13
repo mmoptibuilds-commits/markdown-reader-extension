@@ -1,0 +1,8 @@
+/* The few document styles the settings previews need, matching reader.css. */
+.markdown-body { font-family: var(--font-serif); font-size: var(--reader-font-size, 18px); line-height: var(--reader-line-height, 1.72); color: var(--theme-fg); }
+.font-sans .markdown-body { font-family: var(--font-ui); }
+.font-mono .markdown-body { font-family: var(--font-mono); font-size: calc(var(--reader-font-size, 18px) * .88); }
+.markdown-body h3 { margin: 0 0 .5em; font-size: 1.25em; font-weight: 650; line-height: 1.24; }
+.markdown-body p { margin: 0 0 var(--reader-paragraph-gap, 1.15em); }
+.markdown-body a { color: var(--theme-accent); text-underline-offset: .18em; }
+.markdown-body code { padding: .1em .35em; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-code-bg); color: var(--theme-code-fg); font-family: var(--font-mono); font-size: .84em; }

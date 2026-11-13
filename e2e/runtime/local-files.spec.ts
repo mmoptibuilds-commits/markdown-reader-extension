@@ -35,7 +35,7 @@ test.describe('automatic opening of local Markdown files in installed Chromium',
 
     await expect(readerHeading(page, 'Local guide')).toBeVisible();
     expect(launchUrlOf(page)).toBe(url);
-    await expect(page.locator('.document-kind')).toHaveText('LOCAL FILE');
+    await expect(page.locator('.document-kind')).toHaveText('Local file');
   });
 
   test('opens nested files whose names contain spaces and Unicode', async ({ context, extensionId, localDocs }) => {
@@ -49,7 +49,7 @@ test.describe('automatic opening of local Markdown files in installed Chromium',
 
     await expect(readerHeading(page, 'Übersicht 日本')).toBeVisible();
     expect(launchUrlOf(page)).toBe(url);
-    await expect(page.locator('.toolbar-source')).toContainText('Übersicht – 日本 notes.md');
+    await expect(page.locator('.toolbar-title')).toHaveText('Übersicht – 日本 notes.md');
   });
 
   test('opens every Markdown extension the browser displays as text', async ({ context, extensionId, localDocs }) => {
@@ -117,8 +117,15 @@ test.describe('automatic opening of local Markdown files in installed Chromium',
     await page.reload();
     await expect(readerHeading(page, 'Local guide')).toBeVisible();
 
+    // Back shows the original file, which stays put and offers the reader again.
+    await page.goBack();
+    await page.waitForURL(localDocs.url('Guide.md'));
+    await expect(page.getByText('This Markdown file can be shown in Markdown Reader.')).toBeVisible();
+    await page.waitForTimeout(800);
+    expect(page.url()).toBe(localDocs.url('Guide.md'));
     await page.goBack();
     await page.waitForURL(start);
+    await page.goForward();
     await page.goForward();
     await page.waitForURL(/reader\.html\?url=/);
     await expect(readerHeading(page, 'Local guide')).toBeVisible();
