@@ -13,6 +13,7 @@ import { useSettings } from './hooks/useSettings';
 import { useModalDialog } from './reader/dialogs';
 import { SINGLE_KEY_SHORTCUTS } from './reader/shortcuts';
 import { readingStyle, swatchStyle, useAppliedTheme } from './theme';
+import { hostPattern } from '../core/origins';
 
 const sections = [
   { id: 'appearance', label: 'Appearance & reading' },
@@ -321,7 +322,7 @@ function Sites({ report }: { report: Report }): ReactElement {
   useEffect(() => { void getAutoRenderOrigins().then(setOrigins).catch(() => setOrigins([])); }, []);
   const remove = async (origin: string): Promise<void> => {
     try {
-      await browser.permissions.remove({ origins: [`${origin}/*`] });
+      await browser.permissions.remove({ origins: [hostPattern(origin)] });
       const remaining = (origins ?? []).filter((item) => item !== origin);
       await setAutoRenderOrigins(remaining);
       setOrigins(remaining);
@@ -342,7 +343,7 @@ function ClearData({ report }: { report: Report }): ReactElement {
     try {
       const origins = await getAutoRenderOrigins();
       await clearLocalReaderData();
-      await Promise.all(origins.map((origin) => browser.permissions.remove({ origins: [`${origin}/*`] })));
+      await Promise.all(origins.map((origin) => browser.permissions.remove({ origins: [hostPattern(origin)] })));
       await browser.runtime.sendMessage({ type: AUTO_RENDER_UPDATE_MESSAGE });
       report('Reading history and site access were cleared. Settings were kept.');
     } catch { report('Some data could not be cleared. Try again.', true); }

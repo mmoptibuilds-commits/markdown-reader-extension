@@ -8,6 +8,7 @@ import { getAutoRenderOrigins, getRecents, putPendingDocument, setAutoRenderOrig
 import { choiceToChange, ThemeGallery } from './components/ThemeGallery';
 import { useSettings } from './hooks/useSettings';
 import { useAppliedTheme } from './theme';
+import { hostPattern } from '../core/origins';
 
 const PAGE_TEXT_LIMIT = 2_000_000;
 const readerUrl = (query = ''): string => `${new URL('/reader.html', window.location.href).href}${query}`;
@@ -50,7 +51,7 @@ export function PopupApp(): ReactElement {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) { setMessage('Only http:// and https:// addresses without a user name or password can be opened.'); return; }
     try {
       // Requested first, straight from the click: Firefox refuses a request after another await.
-      const granted = await browser.permissions.request({ origins: [`${url.origin}/*`] });
+      const granted = await browser.permissions.request({ origins: [hostPattern(url)] });
       if (!granted) { setMessage(`Access to ${url.host} was not granted.`); return; }
       await openTab(readerUrl(`?url=${encodeURIComponent(url.href)}`));
     } catch { setMessage(`Access to ${url.host} could not be requested.`); }
@@ -102,7 +103,7 @@ export function PopupApp(): ReactElement {
   const autoOpenOn = currentOrigin ? origins.includes(currentOrigin) : false;
   const toggleAutoOpen = async (): Promise<void> => {
     if (!currentOrigin) return;
-    const pattern = `${currentOrigin}/*`;
+    const pattern = hostPattern(currentOrigin);
     try {
       if (autoOpenOn) {
         await browser.permissions.remove({ origins: [pattern] });
@@ -123,7 +124,7 @@ export function PopupApp(): ReactElement {
     try {
       const url = new URL(item.url);
       // request() resolves at once without a prompt when access is already granted.
-      if (!(await browser.permissions.request({ origins: [`${url.origin}/*`] }))) { setMessage(`Access to ${url.host} was not granted.`); return; }
+      if (!(await browser.permissions.request({ origins: [hostPattern(url)] }))) { setMessage(`Access to ${url.host} was not granted.`); return; }
       await openTab(readerUrl(`?url=${encodeURIComponent(url.href)}`));
     } catch { setMessage('This document could not be reopened.'); }
   };

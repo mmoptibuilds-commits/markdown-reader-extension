@@ -18,8 +18,9 @@
     "test:e2e": "playwright test",
     "build:e2e": "MARKDOWN_READER_E2E=1 wxt build -b chrome",
     "test:e2e:runtime": "npm run build:e2e && playwright test --project=extension-runtime",
-    "test:firefox": "npm run build:firefox && node e2e/firefox/local-files.mjs",
-    "postinstall": "wxt prepare"
+    "test:firefox": "npm run build:firefox && npm run build:e2e:firefox && node e2e/firefox/local-files.mjs && node e2e/firefox/surfaces.mjs",
+    "postinstall": "wxt prepare",
+    "build:e2e:firefox": "MARKDOWN_READER_E2E=1 wxt build -b firefox"
   },
   "engines": {
     "node": ">=22"

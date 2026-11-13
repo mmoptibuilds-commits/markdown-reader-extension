@@ -31,6 +31,7 @@ import { shortcutFor, SINGLE_KEY_SHORTCUTS } from './reader/shortcuts';
 import { prepareDocument } from './reader/prepare';
 import { useDocumentSource } from './reader/useDocumentSource';
 import { readingStyle, useAppliedTheme } from './theme';
+import { hostPattern } from '../core/origins';
 
 type ViewMode = 'rendered' | 'source' | 'split';
 const narrowQuery = '(max-width: 760px)';
@@ -339,14 +340,14 @@ export function ReaderApp(): ReactElement {
     try { url = new URL(remoteInput.trim()); } catch { setProblem({ message: 'Enter a complete address that begins with https:// or http://.' }); return; }
     if (url.protocol !== 'https:' && url.protocol !== 'http:') { setProblem({ message: 'Only http:// and https:// addresses can be opened.' }); return; }
     // The permission request must come straight from the click, before any other await.
-    const granted = await browser.permissions.request({ origins: [`${url.origin}/*`] }).catch(() => false);
+    const granted = await browser.permissions.request({ origins: [hostPattern(url)] }).catch(() => false);
     if (!granted) { setProblem({ message: `Access to ${url.host} was not granted, so the document was not loaded.` }); return; }
     if (await source.openRemote(url.href)) setUrlDialogOpen(false);
   };
   const grantAndRetry = async (): Promise<void> => {
     if (!problem?.origin || !problem.url) return;
     const url = problem.url;
-    const granted = await browser.permissions.request({ origins: [`${problem.origin}/*`] }).catch(() => false);
+    const granted = await browser.permissions.request({ origins: [hostPattern(problem.origin)] }).catch(() => false);
     if (granted) await source.openRemote(url);
     else setProblem({ message: 'Access was not granted, so the document was not loaded.' });
   };

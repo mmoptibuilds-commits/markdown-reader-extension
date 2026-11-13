@@ -6,6 +6,7 @@ import { documentNameFromUrl, readRemoteMarkdown, RemoteDocumentError } from '..
 import { getLocalFileAccess } from '../../shared/file-access';
 import { addRecent, getLocalHandoff, loadSettings, takePendingDocument } from '../../shared/storage';
 import type { FolderWorkspace, ReaderDocument, ReaderProblem } from './types';
+import { hostPattern } from '../../core/origins';
 
 const MAX_FOLDER_FILES = 2500;
 const imagePathPattern = /\.(?:avif|gif|jpe?g|png|svg|webp)$/iu;
@@ -205,7 +206,7 @@ export function useDocumentSource(): DocumentSource {
       if (!quiet) setProblem({ message: 'Only http:// and https:// addresses without a user name or password can be opened.' });
       return undefined;
     }
-    const pattern = `${url.origin}/*`;
+    const pattern = hostPattern(url);
     if (!(await browser.permissions.contains({ origins: [pattern] }).catch(() => false))) {
       if (!quiet) setProblem({ message: `Markdown Reader needs your permission to read documents from ${url.host}.`, recovery: 'grant-origin', origin: url.origin, url: url.href });
       return undefined;
