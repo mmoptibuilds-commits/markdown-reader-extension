@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { plainTextOfDocument, readerUrlFor, settledReaderLocation, shouldOpenInReader, type AutoOpenPage } from './auto-open';
+import { acceptOpenRequest, OPEN_IN_READER_MESSAGE, plainTextOfDocument, planLocalOpen, readerUrlFor, settledReaderLocation, shouldOpenInReader, type AutoOpenPage } from './auto-open';
+import { LOCAL_DOCUMENT_LIMIT_BYTES, LOCAL_HANDOFF_LIMIT_BYTES } from './local-file';
 
 const page = (url: string, contentType: string, overrides: Partial<AutoOpenPage> = {}): AutoOpenPage => ({
   url,
@@ -165,5 +166,74 @@ describe('settling a reader page reached by automatic opening', () => {
     ['a relative address', 'chrome-extension://abc/reader.html?url=%2Fa.md'],
   ])('leaves %s alone', (_label, href) => {
     expect(settledReaderLocation(href)).toBeUndefined();
+  });
+});
+
+describe('planning local automatic opening', () => {
+  const plan = (overrides: Partial<Parameters<typeof planLocalOpen>[0]> = {}) => planLocalOpen({ bytes: 100, firefox: false, navigationType: 'navigate', ...overrides });
+
+  it('opens with a handoff copy when the text fits', () => {
+    expect(plan()).toEqual({ action: 'open', sendText: true });
+    expect(plan({ firefox: true })).toEqual({ action: 'open', sendText: true });
+  });
+
+  it('opens without a copy in Chromium when the text is larger than the handoff limit', () => {
+    expect(plan({ bytes: LOCAL_HANDOFF_LIMIT_BYTES + 1 })).toEqual({ action: 'open', sendText: false });
+  });
+
+  it('stays on the file in Firefox when the text is larger than the handoff limit', () => {
+    expect(plan({ firefox: true, bytes: LOCAL_HANDOFF_LIMIT_BYTES + 1 })).toEqual({ action: 'stay', reason: 'handoff-too-large' });
+  });
+
+  it('stays on the file when it is over the reading limit', () => {
+    expect(plan({ bytes: LOCAL_DOCUMENT_LIMIT_BYTES + 1 })).toEqual({ action: 'stay', reason: 'too-large' });
+  });
+
+  it('stays on the file after Back or Forward, so history never loops', () => {
+    expect(plan({ navigationType: 'back_forward' })).toEqual({ action: 'stay', reason: 'history' });
+  });
+});
+
+describe('validating a request to open a tab in the reader', () => {
+  const file = 'file:///home/reader/My%20Notes/README.md';
+  const web = 'https://docs.example.test/guide.md';
+  const request = (overrides: Partial<Parameters<typeof acceptOpenRequest>[0]> = {}) => acceptOpenRequest({
+    message: { type: OPEN_IN_READER_MESSAGE, url: file },
+    senderUrl: file,
+    senderId: 'ext',
+    extensionId: 'ext',
+    frameId: 0,
+    tabId: 4,
+    localFilesEnabled: true,
+    originAllowed: false,
+    ...overrides,
+  });
+
+  it('accepts a local Markdown file opened by its own tab', () => {
+    expect(request()).toEqual({ url: file, tabId: 4, local: true });
+  });
+
+  it('keeps the fragment of the requested address', () => {
+    expect(request({ message: { type: OPEN_IN_READER_MESSAGE, url: `${file}#part` } })).toMatchObject({ url: `${file}#part` });
+  });
+
+  it('accepts a web document only when its origin is allowed', () => {
+    const message = { type: OPEN_IN_READER_MESSAGE, url: web };
+    expect(request({ message, senderUrl: web, originAllowed: true })).toEqual({ url: web, tabId: 4, local: false });
+    expect(request({ message, senderUrl: web, originAllowed: false })).toBeUndefined();
+  });
+
+  it.each([
+    ['local opening is off', { localFilesEnabled: false }],
+    ['another extension sent it', { senderId: 'other' }],
+    ['a frame sent it', { frameId: 1 }],
+    ['no tab sent it', { tabId: undefined }],
+    ['the sender is a different file', { senderUrl: 'file:///home/reader/other.md' }],
+    ['the file is not Markdown', { senderUrl: 'file:///a/page.html', message: { type: OPEN_IN_READER_MESSAGE, url: 'file:///a/page.html' } }],
+    ['the address is a network share', { senderUrl: 'file://server/share/a.md', message: { type: OPEN_IN_READER_MESSAGE, url: 'file://server/share/a.md' } }],
+    ['the address uses another scheme', { senderUrl: 'ftp://x/a.md', message: { type: OPEN_IN_READER_MESSAGE, url: 'ftp://x/a.md' }, originAllowed: true }],
+    ['the message is malformed', { message: { type: OPEN_IN_READER_MESSAGE } }],
+  ])('refuses the request when %s', (_label, overrides) => {
+    expect(request(overrides as Partial<Parameters<typeof acceptOpenRequest>[0]>)).toBeUndefined();
   });
 });

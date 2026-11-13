@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  acceptLocalHandoffRequest,
   LOCAL_DOCUMENT_LIMIT_BYTES,
   LOCAL_HANDOFF_LIMIT_BYTES,
+  handoffTextOf,
   LocalFileError,
   localAutoOpenState,
   localFileNameFromUrl,
@@ -163,45 +163,23 @@ describe('reading a local Markdown file', () => {
   });
 });
 
-describe('local handoff requests from the content script', () => {
-  const url = 'file:///home/reader/My%20Notes/README.md';
-  const request = (overrides: Partial<Parameters<typeof acceptLocalHandoffRequest>[0]> = {}) => acceptLocalHandoffRequest({
-    message: { type: 'markdown-reader:local-file', url, text: '# Notes' },
-    senderUrl: url,
-    frameId: 0,
-    tabId: 7,
-    enabled: true,
-    ...overrides,
+describe('the handoff text offered with an open request', () => {
+  it('accepts text within the limit, counted in UTF-8 bytes', () => {
+    expect(handoffTextOf({ text: '# Notes' })).toBe('# Notes');
+    expect(handoffTextOf({ text: 'a'.repeat(LOCAL_HANDOFF_LIMIT_BYTES) })).toHaveLength(LOCAL_HANDOFF_LIMIT_BYTES);
+    expect(handoffTextOf({ text: 'ü'.repeat(Math.floor(LOCAL_HANDOFF_LIMIT_BYTES / 2) + 1) })).toBeUndefined();
   });
 
-  it('accepts a top-frame request for the sender’s own Markdown file', () => {
-    expect(request()).toEqual({ url, text: '# Notes', tabId: 7 });
+  it.each([[{}], [{ text: 4 }], ['text'], [null]])('ignores %j', (message) => {
+    expect(handoffTextOf(message)).toBeUndefined();
   });
+});
 
-  it('ignores a fragment difference between the sender and the message', () => {
-    expect(request({ senderUrl: `${url}#part` })).toBeDefined();
-  });
-
-  it.each([
-    ['local opening is off', { enabled: false }],
-    ['the request comes from a frame', { frameId: 2 }],
-    ['there is no tab', { tabId: undefined }],
-    ['the sender is a different file', { senderUrl: 'file:///home/reader/other.md' }],
-    ['the sender is a web page', { senderUrl: 'https://example.test/README.md' }],
-    ['the file is not Markdown', { senderUrl: 'file:///home/reader/page.html', message: { type: 'markdown-reader:local-file', url: 'file:///home/reader/page.html', text: 'x' } }],
-    ['the text is missing', { message: { type: 'markdown-reader:local-file', url } }],
-    ['the message is malformed', { message: 'hello' }],
-  ])('refuses the request when %s', (_label, overrides) => {
-    expect(request(overrides as Partial<Parameters<typeof acceptLocalHandoffRequest>[0]>)).toBeUndefined();
-  });
-
-  it('refuses text over the handoff limit', () => {
-    const text = 'a'.repeat(LOCAL_HANDOFF_LIMIT_BYTES + 1);
-    expect(request({ message: { type: 'markdown-reader:local-file', url, text } })).toBeUndefined();
-  });
-
-  it('counts the limit in UTF-8 bytes, not characters', () => {
-    const text = 'ü'.repeat(Math.floor(LOCAL_HANDOFF_LIMIT_BYTES / 2) + 1);
-    expect(request({ message: { type: 'markdown-reader:local-file', url, text } })).toBeUndefined();
+describe('the shared local size limit', () => {
+  it('accepts a file exactly at the limit and refuses one byte more', async () => {
+    const { checkLocalFileSize } = await import('./local-file');
+    expect(checkLocalFileSize(LOCAL_DOCUMENT_LIMIT_BYTES)).toBeUndefined();
+    expect(checkLocalFileSize(LOCAL_DOCUMENT_LIMIT_BYTES + 1)).toMatchObject({ kind: 'size' });
+    expect(checkLocalFileSize(0)).toBeUndefined();
   });
 });

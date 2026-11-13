@@ -16,7 +16,6 @@ import markdownItTaskLists from 'markdown-it-task-lists';
 import type { HLJSApi, LanguageFn } from 'highlight.js';
 import {
   buildHeadingIndex,
-  classifyDocument,
   isSafeLink,
   parseFrontmatter,
   resolveFolderTarget,
@@ -24,6 +23,7 @@ import {
   type Heading,
   type HeadingDraft,
 } from './document';
+import { cssCanFetch } from './css-safety';
 
 export interface RenderMarkdownOptions {
   sourceUrl?: string;
@@ -39,7 +39,6 @@ export interface RenderedMarkdown {
   html: string;
   headings: Heading[];
   metadata: Record<string, unknown>;
-  containsDiagrams: boolean;
   frontmatterError?: string;
 }
 
@@ -394,7 +393,7 @@ function createMarkdownIt(environment: MarkdownEnvironment): MarkdownItInstance 
 
     const title = String(token.attrGet('title') ?? '');
     const titleAttribute = title ? ` title="${escapeHtml(title)}"` : '';
-    return `<figure class="reader-figure"><img src="${escapeHtml(assetSource.src)}" alt="${escapeHtml(token.content)}" class="reader-image" loading="lazy" decoding="async"${titleAttribute}>${token.content ? `<figcaption>${escapeHtml(token.content)}</figcaption>` : ''}</figure>`;
+    return `<figure class="reader-figure"><img src="${escapeHtml(assetSource.src)}" alt="${escapeHtml(token.content)}" class="reader-image" loading="lazy" decoding="async" referrerpolicy="no-referrer"${titleAttribute}>${token.content ? `<figcaption>${escapeHtml(token.content)}</figcaption>` : ''}</figure>`;
   };
 
   markdown.renderer.rules.link_open = (tokens, index, _options, rawEnvironment, self) => {
@@ -422,10 +421,13 @@ function createMarkdownIt(environment: MarkdownEnvironment): MarkdownItInstance 
     } else if (env.renderOptions.sourceUrl && !/^[a-z][a-z\d+.-]*:/iu.test(href) && !href.startsWith('//')) {
       try {
         const resolved = new URL(href, env.renderOptions.sourceUrl);
-        if (isSafeLink(resolved.href)) token.attrSet('href', resolved.href);
+        token.attrSet('href', isSafeLink(resolved.href) ? resolved.href : '#invalid-link');
       } catch {
         token.attrSet('href', '#invalid-link');
       }
+    } else if (!/^[a-z][a-z\d+.-]*:/iu.test(href) && !href.startsWith('#')) {
+      // With no base address, a relative link would resolve inside the extension.
+      token.attrSet('href', '#invalid-link');
     }
 
     const safeHref = String(token.attrGet('href') ?? '');
@@ -498,42 +500,46 @@ function buildRenderedHtml(rawHtml: string): string {
     USE_PROFILES: { html: true, mathMl: true, svg: true },
     ALLOW_DATA_ATTR: true,
     ALLOW_ARIA_ATTR: true,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|(?:[^a-z+.-]|[a-z+.-]+(?:[^a-z+.-:]|$)))/iu,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|(?:[^a-z+.-]|[a-z+.-]+(?:[^a-z+.\-:]|$)))/iu,
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+    ADD_ATTR: ['referrerpolicy'],
   });
 }
 
-export function sanitizeSvg(svg: string): string {
-  if (svg.length > 4_000_000) return '';
+/**
+ * Sanitizes diagram SVG and returns the parsed root, ready to insert without reparsing.
+ * Event handlers, scripts, foreign content, external references, and any CSS that could
+ * fetch a resource are removed.
+ */
+export function sanitizeSvgElement(svg: string): SVGSVGElement | undefined {
+  if (svg.length > 4_000_000) return undefined;
   const safeSvg = DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true },
+    USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
   });
-  const document = new DOMParser().parseFromString(safeSvg, 'image/svg+xml');
-  const root = document.documentElement;
-  if (root.localName !== 'svg' || document.querySelector('parsererror')) return '';
-  let modified = false;
-
-  const hasExternalUrl = (value: string): boolean => [...value.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/giu)]
-    .some((match) => !(match[1] ?? match[2] ?? match[3] ?? '').trim().startsWith('#'));
+  const parsed = new DOMParser().parseFromString(safeSvg, 'image/svg+xml');
+  const root = parsed.documentElement;
+  if (root.localName !== 'svg' || parsed.querySelector('parsererror')) return undefined;
 
   for (const element of [root, ...root.querySelectorAll('*')]) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
       const value = attribute.value.trim();
-      if (name === 'xml:base' || ((name === 'href' || name.endsWith(':href')) && value && !value.startsWith('#')) || hasExternalUrl(value)) {
+      const externalReference = (name === 'href' || name.endsWith(':href')) && value !== '' && !value.startsWith('#');
+      if (name === 'xml:base' || externalReference || ((name === 'style' || /url\s*\(/iu.test(value)) && cssCanFetch(value))) {
         element.removeAttribute(attribute.name);
-        modified = true;
       }
     }
   }
   for (const style of root.querySelectorAll('style')) {
-    if (/@import\b/iu.test(style.textContent ?? '') || hasExternalUrl(style.textContent ?? '')) {
-      style.remove();
-      modified = true;
-    }
+    if (cssCanFetch(style.textContent ?? '')) style.remove();
   }
-  return modified ? new XMLSerializer().serializeToString(root) : safeSvg;
+  return root as unknown as SVGSVGElement;
+}
+
+export function sanitizeSvg(svg: string): string {
+  const element = sanitizeSvgElement(svg);
+  return element ? new XMLSerializer().serializeToString(element) : '';
 }
 
 export async function renderMarkdown(source: string, options: RenderMarkdownOptions = {}): Promise<RenderedMarkdown> {
@@ -567,11 +573,7 @@ export async function renderMarkdown(source: string, options: RenderMarkdownOpti
     html,
     headings,
     metadata: frontmatter.metadata,
-    containsDiagrams: /class="diagram-placeholder"/u.test(html),
   };
   return frontmatter.error ? { ...base, frontmatterError: frontmatter.error } : base;
 }
 
-export function isMarkdownDocument(value: string, mimeType?: string): boolean {
-  return classifyDocument(value, mimeType) === 'markdown';
-}

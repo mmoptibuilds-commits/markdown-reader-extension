@@ -43,6 +43,14 @@ const unsafeObjectKeys = new Set(['__proto__', 'prototype', 'constructor']);
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** A file the reader opens from a picker or drop: any Markdown extension, or .txt chosen on purpose. */
+export function isOpenableFileName(name: string): boolean {
+  return hasMarkdownExtension(name) || /\.txt$/iu.test(name);
+}
+
+/** The `accept` list for file inputs, matching {@link isOpenableFileName}. */
+export const OPENABLE_FILE_ACCEPT = '.md,.markdown,.mdx,.mkd,.mkdn,.mdown,.mdwn,.txt,text/markdown,text/plain';
+
 export function classifyDocument(
   source: string,
   mimeType?: string,

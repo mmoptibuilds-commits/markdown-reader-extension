@@ -97,3 +97,11 @@ describe('folder-relative links', () => {
     expect(resolveFolderTarget('notes/README.md', '../../../private.md')).toBeUndefined();
   });
 });
+
+describe('openable file names', () => {
+  it('accepts every Markdown extension and .txt, in any case', async () => {
+    const { isOpenableFileName } = await import('./document');
+    for (const name of ['a.md', 'a.MARKDOWN', 'a.mdx', 'a.mkd', 'a.mkdn', 'a.mdown', 'a.mdwn', 'notes.txt']) expect(isOpenableFileName(name)).toBe(true);
+    for (const name of ['a.html', 'a.pdf', 'a.png', 'README', 'a.md.exe']) expect(isOpenableFileName(name)).toBe(false);
+  });
+});

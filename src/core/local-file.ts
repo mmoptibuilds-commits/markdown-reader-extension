@@ -18,6 +18,13 @@ export const LOCAL_HANDOFF_LIMIT_BYTES = 4 * 1024 * 1024;
  */
 export type LocalAutoOpenState = 'active' | 'disabled' | 'permission-required' | 'unavailable';
 
+export const LOCAL_SIZE_LIMIT_MESSAGE = 'This file is larger than the 16 MB reading limit. Split it into smaller Markdown files.';
+
+/** The size check every way of opening a local file shares. Run it before reading. */
+export function checkLocalFileSize(size: number): LocalFileError | undefined {
+  return size > LOCAL_DOCUMENT_LIMIT_BYTES ? new LocalFileError('size', LOCAL_SIZE_LIMIT_MESSAGE) : undefined;
+}
+
 export type LocalFileErrorKind = 'unreadable' | 'size';
 
 /** An error whose message is safe to show to the reader. */
@@ -93,8 +100,7 @@ export async function readLocalMarkdown(url: URL, fetcher: typeof fetch): Promis
     await response.body?.cancel().catch(() => undefined);
     throw unreadable();
   }
-  const tooLarge = (): LocalFileError =>
-    new LocalFileError('size', 'This file is larger than the 16 MB reading limit. Split it into smaller Markdown files.');
+  const tooLarge = (): LocalFileError => new LocalFileError('size', LOCAL_SIZE_LIMIT_MESSAGE);
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > LOCAL_DOCUMENT_LIMIT_BYTES) {
     await response.body?.cancel().catch(() => undefined);
@@ -126,32 +132,9 @@ export async function readLocalMarkdown(url: URL, fetcher: typeof fetch): Promis
   return text + decoder.decode();
 }
 
-export const LOCAL_HANDOFF_MESSAGE = 'markdown-reader:local-file';
-
-export interface LocalHandoffRequest {
-  message: unknown;
-  /** The sending frame's URL as reported by the browser, not by the content script. */
-  senderUrl: string | undefined;
-  frameId: number | undefined;
-  tabId: number | undefined;
-  /** The user's stored opt-in, read by the background worker. */
-  enabled: boolean;
-}
-
-const withoutFragment = (raw: string): string => raw.split('#', 1)[0] ?? raw;
-
-/**
- * Validates a content script's request to hand a local file's text to the reader. The file
- * must be the sender's own top-level Markdown document, the user must have opted in, and
- * the text must fit the session-storage handoff limit.
- */
-export function acceptLocalHandoffRequest(request: LocalHandoffRequest): (LocalHandoff & { tabId: number }) | undefined {
-  const { message, senderUrl, frameId, tabId, enabled } = request;
-  if (!enabled || frameId !== 0 || tabId === undefined || !senderUrl) return undefined;
-  if (typeof message !== 'object' || message === null) return undefined;
-  const { type, url, text } = message as { type?: unknown; url?: unknown; text?: unknown };
-  if (type !== LOCAL_HANDOFF_MESSAGE || typeof url !== 'string' || typeof text !== 'string') return undefined;
-  if (!parseLocalMarkdownUrl(url) || withoutFragment(url) !== withoutFragment(senderUrl)) return undefined;
-  if (new TextEncoder().encode(text).byteLength > LOCAL_HANDOFF_LIMIT_BYTES) return undefined;
-  return { url, text, tabId };
+/** The text a content script offered for the handoff, when it is a string within the limit. */
+export function handoffTextOf(message: unknown): string | undefined {
+  const text = typeof message === 'object' && message !== null ? (message as { text?: unknown }).text : undefined;
+  if (typeof text !== 'string') return undefined;
+  return new TextEncoder().encode(text).byteLength <= LOCAL_HANDOFF_LIMIT_BYTES ? text : undefined;
 }

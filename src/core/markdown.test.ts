@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, sanitizeSvg } from './markdown';
+import { renderMarkdown, sanitizeSvg, sanitizeSvgElement } from './markdown';
 
 describe('renderMarkdown', () => {
   it('renders common GFM constructs and an outline', async () => {
@@ -119,5 +119,58 @@ describe('renderMarkdown', () => {
     expect(result.html).toContain('katex-display');
     expect(result.html).toContain('<summary>A little more</summary>');
     expect(result.html).toContain('Hidden context.');
+  });
+});
+
+describe('diagram SVG cannot fetch resources', () => {
+  it.each([
+    ['image-set() in a style element', '<svg><style>#a{background-image:image-set("https://t.example/p" 1x)}</style><rect id="a"/></svg>'],
+    ['an escaped url() in a style element', '<svg><style>#a{background:u\\72l(https://t.example/p)}</style><rect id="a"/></svg>'],
+    ['an escaped @import', '<svg><style>@\\69mport "https://t.example/x.css";</style><rect/></svg>'],
+    ['@font-face', '<svg><style>@font-face{font-family:x;src:local(x)}</style><rect/></svg>'],
+    ['cross-fade() in a style attribute', '<svg><rect style="fill:cross-fade(url(#a), url(#b))"/></svg>'],
+    ['image() in a style attribute', '<svg><rect style="background:image(\'https://t.example/p\')"/></svg>'],
+  ])('removes %s', (_label, svg) => {
+    const safe = sanitizeSvg(svg);
+    expect(safe).not.toContain('t.example');
+    expect(safe).not.toMatch(/image-set|cross-fade|image\(|@import|@font-face|\\72/iu);
+    expect(safe).toContain('<rect');
+  });
+
+  it('keeps local url(#id) references and ordinary styles', () => {
+    const safe = sanitizeSvg('<svg><defs><marker id="arrow"/></defs><style>.edge{stroke:#333;marker-end:url(#arrow);font-family:"trebuchet ms",sans-serif}</style><path class="edge" style="marker-end:url(#arrow)"/></svg>');
+    expect(safe).toContain('url(#arrow)');
+    expect(safe).toContain('.edge');
+  });
+
+  it('returns a parsed element for direct insertion', () => {
+    const element = sanitizeSvgElement('<svg><circle r="1"/></svg>');
+    expect(element?.localName).toBe('svg');
+    expect(sanitizeSvgElement('<p>not svg</p>')).toBeUndefined();
+  });
+});
+
+describe('links and images without a safe destination', () => {
+  it('neutralizes relative links when the document has no base address', async () => {
+    const result = await renderMarkdown('[Settings](options.html) [Reader](reader.html?url=x) [Up](../notes.md)');
+    expect(result.html).not.toMatch(/href="(?:options|reader)\.html/u);
+    expect(result.html).not.toContain('href="../notes.md"');
+  });
+
+  it('neutralizes a relative link that resolves to an unsafe scheme', async () => {
+    const result = await renderMarkdown('[Local](other.md)', { sourceUrl: 'file:///home/reader/a.md' });
+    expect(result.html).not.toContain('href="other.md"');
+    expect(result.html).not.toContain('file:');
+  });
+
+  it('keeps fragment links and absolute web links', async () => {
+    const result = await renderMarkdown('# Top\n\n[Top](#top) [Web](https://example.test/a)');
+    expect(result.html).toContain('href="#md-top"');
+    expect(result.html).toContain('href="https://example.test/a"');
+  });
+
+  it('sends no referrer with remote images', async () => {
+    const result = await renderMarkdown('![Logo](https://images.example.test/logo.png)', { allowRemoteImages: true });
+    expect(result.html).toContain('referrerpolicy="no-referrer"');
   });
 });
