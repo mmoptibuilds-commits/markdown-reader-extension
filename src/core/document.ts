@@ -1,5 +1,3 @@
-import { parse as parseYaml } from 'yaml';
-
 export type DocumentFormat = 'markdown' | 'text' | 'unsupported';
 
 export interface HeadingDraft {
@@ -42,6 +40,14 @@ const htmlMimeTypes = new Set(['text/html', 'application/xhtml+xml']);
 const unsafeObjectKeys = new Set(['__proto__', 'prototype', 'constructor']);
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** A file the reader opens from a picker or drop: any Markdown extension, or .txt chosen on purpose. */
+export function isOpenableFileName(name: string): boolean {
+  return hasMarkdownExtension(name) || /\.txt$/iu.test(name);
+}
+
+/** The `accept` list for file inputs, matching {@link isOpenableFileName}. */
+export const OPENABLE_FILE_ACCEPT = '.md,.markdown,.mdx,.mkd,.mkdn,.mdown,.mdwn,.txt,text/markdown,text/plain';
 
 export function classifyDocument(
   source: string,
@@ -125,7 +131,12 @@ function sanitizeMetadata(value: unknown, depth = 0): unknown {
   return safe;
 }
 
-export function parseFrontmatter(source: string): FrontmatterResult {
+/** A YAML parser; `yaml`'s parse is passed in so the parser loads only for documents with frontmatter. */
+export type YamlParse = (text: string, options: { maxAliasCount: number }) => unknown;
+
+export const hasFrontmatter = (source: string): boolean => /^---\r?\n/u.test(source);
+
+export function parseFrontmatter(source: string, parseYaml: YamlParse): FrontmatterResult {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   if (!match) return { body: source, metadata: {} };
 
@@ -153,23 +164,7 @@ export function parseFrontmatter(source: string): FrontmatterResult {
   }
 }
 
-export function findTextMatches(text: string, query: string): number[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [];
-
-  const haystack = text.toLowerCase();
-  const matches: number[] = [];
-  let offset = 0;
-  while (offset <= haystack.length - needle.length) {
-    const found = haystack.indexOf(needle, offset);
-    if (found < 0) break;
-    matches.push(found);
-    offset = found + needle.length;
-  }
-  return matches;
-}
-
-export function normalizeRelativePath(path: string): string | undefined {
+function normalizeRelativePath(path: string): string | undefined {
   const parts: string[] = [];
   for (const part of path.replace(/\\/gu, '/').split('/')) {
     if (!part || part === '.') continue;

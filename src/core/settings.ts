@@ -1,8 +1,12 @@
+import { cssCanFetch } from './css-safety';
+import { normalizeHexColor } from './themes';
+
 export const SETTINGS_STORAGE_KEY = 'markdownReaderSettings';
 export const SETTINGS_FILE_FORMAT = 'markdown-reader-settings';
 export const SETTINGS_FILE_VERSION = 1;
+export const MAX_CUSTOM_THEMES = 12;
 
-export const THEME_IDS = ['paper', 'snow', 'sepia', 'graphite', 'midnight', 'system'] as const;
+export const THEME_IDS = ['paper', 'snow', 'sepia', 'solarized-light', 'graphite', 'midnight', 'nord', 'solarized-dark', 'oled', 'system'] as const;
 export type ThemeId = (typeof THEME_IDS)[number];
 export type ReadingFont = 'sans' | 'serif' | 'mono';
 export type CodeTheme = 'match' | 'light' | 'dark';
@@ -31,6 +35,8 @@ export interface ReaderSettings {
   restorePosition: boolean;
   /** Opens local Markdown files in the reader. The browser must also grant file access. */
   autoOpenLocalFiles: boolean;
+  /** Letter shortcuts such as T and F. Users of speech input or switch devices may need them off. */
+  singleKeyShortcuts: boolean;
   customCss: string;
   customThemes: CustomTheme[];
 }
@@ -55,6 +61,7 @@ export const DEFAULT_SETTINGS: Readonly<ReaderSettings> = Object.freeze({
   liveReloadSeconds: 15,
   restorePosition: false,
   autoOpenLocalFiles: false,
+  singleKeyShortcuts: true,
   customCss: '',
   customThemes: [],
 });
@@ -69,18 +76,16 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Math.round(bounded * scale) / scale;
 }
 
+/** Custom theme colours are #rgb or #rrggbb, stored as lowercase #rrggbb. */
 function safeColor(value: unknown, fallback: string): string {
-  if (typeof value !== 'string' || value.length > 32) return fallback;
-  return /^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([\d.% ,/+-]+\)|[a-z]{1,20})$/iu.test(value.trim())
-    ? value.trim()
-    : fallback;
+  return typeof value === 'string' && value.length <= 16 ? normalizeHexColor(value) ?? fallback : fallback;
 }
 
 function normalizeCustomThemes(value: unknown): CustomTheme[] {
   if (!Array.isArray(value)) return [];
   const themes: CustomTheme[] = [];
   const ids = new Set<string>();
-  for (const item of value.slice(0, 12)) {
+  for (const item of value.slice(0, MAX_CUSTOM_THEMES)) {
     if (!isRecord(item)) continue;
     const id = typeof item.id === 'string' ? item.id.replace(/[^a-z\d_-]/giu, '').slice(0, 32) : '';
     const name = typeof item.name === 'string' ? item.name.trim().slice(0, 40) : '';
@@ -100,10 +105,8 @@ function normalizeCustomThemes(value: unknown): CustomTheme[] {
 export function scopeCustomCss(source: string): string {
   const css = source.trim();
   if (!css || css.length > 16_384) return '';
-  if (/[\\@]|\/\*|\*\/|url\s*\(|expression\s*\(|javascript\s*:|data\s*:/iu.test(css)) return '';
-  // image(), image-set(), src() and cross-fade() can fetch resources without url(), and a
-  // quoted first argument to any function is how they carry a URL.
-  if (/(?:^|[^\w-])(?:-webkit-)?(?:image|image-set|src|cross-fade)\s*\(/iu.test(css) || /\(\s*["']/u.test(css)) return '';
+  // User CSS allows no at-rules, comments, url() at all, or quoted function arguments.
+  if (/[@]|\/\*|\*\/|url\s*\(/iu.test(css) || /\(\s*["']/u.test(css) || cssCanFetch(css)) return '';
 
   const rules = css.match(/[^{}]+\{[^{}]*\}/gu);
   if (!rules || rules.join('').replace(/\s/gu, '') !== css.replace(/\s/gu, '')) return '';
@@ -170,6 +173,7 @@ export function normalizeSettings(value: unknown): ReaderSettings {
     liveReloadSeconds: reloadSeconds,
     restorePosition: input.restorePosition === true,
     autoOpenLocalFiles: input.autoOpenLocalFiles === true,
+    singleKeyShortcuts: input.singleKeyShortcuts !== false,
     customCss,
     customThemes,
   };
@@ -184,12 +188,6 @@ export async function saveSettings(storage: SettingsStorage, settings: unknown):
   const normalized = normalizeSettings(settings);
   await storage.set({ [SETTINGS_STORAGE_KEY]: normalized });
   return normalized;
-}
-
-/** Applies a partial change on top of the stored settings, so concurrent pages do not overwrite each other. */
-export async function updateSettings(storage: SettingsStorage, patch: Partial<ReaderSettings>): Promise<ReaderSettings> {
-  const current = await loadSettings(storage);
-  return saveSettings(storage, { ...current, ...patch });
 }
 
 export function exportSettings(settings: unknown): string {

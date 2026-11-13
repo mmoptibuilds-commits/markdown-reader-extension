@@ -1,3 +1,4 @@
+import { hostPattern } from '../core/origins';
 /** Browser-facing operations on the single dynamic content script that opens Markdown URLs. */
 export interface AutoRenderRegistry {
   isRegistered(): Promise<boolean>;
@@ -29,7 +30,7 @@ export function originToMatchPattern(origin: string): string | undefined {
     const url = new URL(origin);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
     if (url.username || url.password || url.origin !== origin) return undefined;
-    return `${url.origin}/*`;
+    return hostPattern(url);
   } catch {
     return undefined;
   }

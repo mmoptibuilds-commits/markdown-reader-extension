@@ -1,11 +1,10 @@
 import { browser } from 'wxt/browser';
 import {
   loadSettings as loadCoreSettings,
-  saveSettings as saveCoreSettings,
-  updateSettings,
   type ReaderSettings,
   type SettingsStorage,
 } from '../core/settings';
+import { createSettingsWriter, SETTINGS_CHANGE_MESSAGE, SettingsChangeError, type SettingsChange } from '../core/settings-change';
 import { parseLocalHandoff, type LocalHandoff } from '../core/local-file';
 
 export interface RecentDocument {
@@ -33,7 +32,7 @@ export interface SessionDocument {
   size?: number;
 }
 
-export const SESSION_DOCUMENT_KEY = 'markdownReaderPendingDocument';
+const PENDING_DOCUMENT_PREFIX = 'markdownReaderPendingDocument:';
 const RECENTS_KEY = 'markdownReaderRecents';
 const PROGRESS_KEY = 'markdownReaderProgress';
 const BOOKMARKS_KEY = 'markdownReaderBookmarks';
@@ -47,15 +46,28 @@ interface StoredLocalHandoff extends LocalHandoff {
   createdAt: number;
 }
 
-const settingsStorage: SettingsStorage = {
+export const settingsStorage: SettingsStorage = {
   get: (key) => browser.storage.local.get(key),
   set: (items) => browser.storage.local.set(items),
 };
 
 export const loadSettings = (): Promise<ReaderSettings> => loadCoreSettings(settingsStorage);
-export const saveSettings = (settings: unknown): Promise<ReaderSettings> => saveCoreSettings(settingsStorage, settings);
-/** Saves only the given fields, merged into whatever is stored at write time. */
-export const patchSettings = (patch: Partial<ReaderSettings>): Promise<ReaderSettings> => updateSettings(settingsStorage, patch);
+
+/** Applies changes in this context. The background worker owns the shared queue. */
+export const writeSettingsLocally = createSettingsWriter(settingsStorage);
+
+type SettingsChangeReply = { ok: true; settings: ReaderSettings } | { ok: false; error: string; rejected?: boolean };
+
+/**
+ * Sends a change to the background worker, which applies every page's changes in order.
+ * Falls back to this context's own queue only when no worker answers.
+ */
+export async function changeSettings(change: SettingsChange): Promise<ReaderSettings> {
+  const reply = await browser.runtime.sendMessage({ type: SETTINGS_CHANGE_MESSAGE, change }).catch(() => undefined) as SettingsChangeReply | undefined;
+  if (reply === undefined || typeof reply !== 'object' || reply === null || !('ok' in reply)) return writeSettingsLocally(change);
+  if (reply.ok) return reply.settings;
+  throw reply.rejected ? new SettingsChangeError(reply.error) : new Error(reply.error);
+}
 
 export async function getRecents(): Promise<RecentDocument[]> {
   const value: unknown = (await browser.storage.local.get(RECENTS_KEY))[RECENTS_KEY];
@@ -81,14 +93,16 @@ export async function addRecent(document: Omit<RecentDocument, 'lastOpened'>): P
   await browser.storage.local.set({ [RECENTS_KEY]: [safe, ...recents.filter((item) => item.id !== safe.id)].slice(0, 12) });
 }
 
-export async function clearRecents(): Promise<void> {
-  await browser.storage.local.remove(RECENTS_KEY);
-}
-
-export async function takePendingDocument(): Promise<SessionDocument | undefined> {
-  const result = await browser.storage.session.get(SESSION_DOCUMENT_KEY);
-  await browser.storage.session.remove(SESSION_DOCUMENT_KEY);
-  const value: unknown = result[SESSION_DOCUMENT_KEY];
+/**
+ * Reads and removes a document another extension page handed to a new reader tab. Each
+ * hand-off has its own token, so two quick opens cannot swap documents.
+ */
+export async function takePendingDocument(token: string): Promise<SessionDocument | undefined> {
+  if (!handoffTokenPattern.test(token)) return undefined;
+  const key = PENDING_DOCUMENT_PREFIX + token;
+  const result = await browser.storage.session.get(key);
+  await browser.storage.session.remove(key);
+  const value: unknown = result[key];
   if (typeof value !== 'object' || value === null) return undefined;
   const item = value as Partial<SessionDocument>;
   if ((item.kind !== 'local' && item.kind !== 'page') || typeof item.name !== 'string' || typeof item.text !== 'string') {
@@ -104,8 +118,11 @@ export async function takePendingDocument(): Promise<SessionDocument | undefined
   };
 }
 
-export async function putPendingDocument(document: SessionDocument): Promise<void> {
-  await browser.storage.session.set({ [SESSION_DOCUMENT_KEY]: document });
+/** Stores a document for the reader tab about to open and returns its token. */
+export async function putPendingDocument(document: SessionDocument): Promise<string> {
+  const token = crypto.randomUUID();
+  await browser.storage.session.set({ [PENDING_DOCUMENT_PREFIX + token]: document });
+  return token;
 }
 
 export async function getReadingPosition(id: string): Promise<number | undefined> {

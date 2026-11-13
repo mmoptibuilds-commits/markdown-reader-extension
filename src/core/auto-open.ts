@@ -1,5 +1,5 @@
 import { hasMarkdownExtension, isMarkdownMimeType } from './document';
-import { parseLocalMarkdownUrl } from './local-file';
+import { LOCAL_DOCUMENT_LIMIT_BYTES, LOCAL_HANDOFF_LIMIT_BYTES, parseLocalMarkdownUrl } from './local-file';
 
 /** Facts about a navigation that the automatic-opening content script can observe. */
 export interface AutoOpenPage {
@@ -81,3 +81,65 @@ export function settledReaderLocation(href: string): string | undefined {
   url.searchParams.set('settled', '1');
   return url.href;
 }
+
+export const OPEN_IN_READER_MESSAGE = 'markdown-reader:open-in-reader';
+
+/** How the browser reached the current document (PerformanceNavigationTiming.type). */
+export type NavigationKind = 'navigate' | 'reload' | 'back_forward' | 'prerender';
+
+export type LocalOpenPlan =
+  | { action: 'open'; sendText: boolean }
+  | { action: 'stay'; reason: 'history' | 'too-large' | 'handoff-too-large' };
+
+/**
+ * Decides, before any navigation, whether a local file can open in the reader. Firefox
+ * extension pages cannot read file URLs, so there the reader depends on the handoff copy
+ * and the tab must stay on the file when that copy cannot be made. Back and Forward never
+ * redirect, so the original file stays reachable in history.
+ */
+export function planLocalOpen({ bytes, firefox, navigationType }: { bytes: number; firefox: boolean; navigationType: NavigationKind }): LocalOpenPlan {
+  if (navigationType === 'back_forward') return { action: 'stay', reason: 'history' };
+  if (bytes > LOCAL_DOCUMENT_LIMIT_BYTES) return { action: 'stay', reason: 'too-large' };
+  if (bytes <= LOCAL_HANDOFF_LIMIT_BYTES) return { action: 'open', sendText: true };
+  return firefox ? { action: 'stay', reason: 'handoff-too-large' } : { action: 'open', sendText: false };
+}
+
+export interface OpenRequest {
+  message: unknown;
+  /** Facts the browser reports about the sender, never values the content script supplies. */
+  senderUrl: string | undefined;
+  senderId: string | undefined;
+  extensionId: string;
+  frameId: number | undefined;
+  tabId: number | undefined;
+  /** The user's stored opt-in for local files. */
+  localFilesEnabled: boolean;
+  /** Whether the sender's web origin is on the user's automatic-opening list and granted. */
+  originAllowed: boolean;
+}
+
+export interface AcceptedOpenRequest {
+  url: string;
+  tabId: number;
+  local: boolean;
+}
+
+/**
+ * Validates a content script's request to move its own tab into the reader. The background
+ * worker performs the navigation, so the reader page need not be reachable from web pages.
+ */
+export function acceptOpenRequest(request: OpenRequest): AcceptedOpenRequest | undefined {
+  const { message, senderUrl, senderId, extensionId, frameId, tabId } = request;
+  if (senderId !== extensionId || frameId !== 0 || tabId === undefined || !senderUrl) return undefined;
+  if (typeof message !== 'object' || message === null) return undefined;
+  const { type, url } = message as { type?: unknown; url?: unknown };
+  if (type !== OPEN_IN_READER_MESSAGE || typeof url !== 'string') return undefined;
+  if (withoutFragment(url) !== withoutFragment(senderUrl)) return undefined;
+  if (parseLocalMarkdownUrl(url)) return request.localFilesEnabled ? { url, tabId, local: true } : undefined;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return undefined; }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password) return undefined;
+  return request.originAllowed ? { url, tabId, local: false } : undefined;
+}
+
+const withoutFragment = (raw: string): string => raw.split('#', 1)[0] ?? raw;

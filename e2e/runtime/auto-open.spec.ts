@@ -37,9 +37,24 @@ test.describe('automatic Markdown opening in installed Chromium', () => {
     await page.reload();
     await expect(readerHeading(page, 'Runtime document')).toBeVisible();
 
+    // Back returns to the original document, which stays put and offers the reader again.
+    await page.goBack();
+    await page.waitForURL(`${documentServer.origin}/doc.md`);
+    await expect(page.getByText('This Markdown document can be shown in Markdown Reader.')).toBeVisible();
+    await page.waitForTimeout(800);
+    expect(page.url()).toBe(`${documentServer.origin}/doc.md`);
     await page.goBack();
     await page.waitForURL(start);
+
     await page.goForward();
+    await page.waitForURL(`${documentServer.origin}/doc.md`);
+    await page.goForward();
+    await page.waitForURL(/reader\.html\?url=/);
+    await expect(readerHeading(page, 'Runtime document')).toBeVisible();
+
+    // The notice's button opens the reader again.
+    await page.goBack();
+    await page.getByRole('button', { name: 'Open in reader' }).click();
     await page.waitForURL(/reader\.html\?url=/);
     await expect(readerHeading(page, 'Runtime document')).toBeVisible();
   });

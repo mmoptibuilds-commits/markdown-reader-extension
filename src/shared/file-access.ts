@@ -10,11 +10,20 @@ import { LOCAL_FILE_MATCH_PATTERN } from './auto-render-sync';
 export async function getLocalFileAccess(): Promise<boolean | undefined> {
   try {
     if (typeof browser.extension?.isAllowedFileSchemeAccess !== 'function') return undefined;
+    // Before Firefox 153 the answer is always false and there is no switch to change it.
+    if (import.meta.env.FIREFOX && (await firefoxMajorVersion()) < FIREFOX_FILE_ACCESS_VERSION) return undefined;
     if (!(await browser.extension.isAllowedFileSchemeAccess())) return false;
     return await browser.permissions.contains({ origins: [LOCAL_FILE_MATCH_PATTERN] });
   } catch {
     return undefined;
   }
+}
+
+export const FIREFOX_FILE_ACCESS_VERSION = 153;
+
+async function firefoxMajorVersion(): Promise<number> {
+  const info = await (browser.runtime as unknown as { getBrowserInfo?: () => Promise<{ version: string }> }).getBrowserInfo?.();
+  return Number.parseInt(info?.version ?? '0', 10) || 0;
 }
 
 /**

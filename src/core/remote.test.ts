@@ -18,20 +18,20 @@ async function failure(promise: Promise<unknown>): Promise<RemoteDocumentError> 
 
 describe('remote Markdown loading', () => {
   it('returns the decoded text of a successful Markdown response', async () => {
-    const result = await readRemoteMarkdown(url, async () => markdownResponse('# Remote\n\nBody.'), { isOriginAllowed: () => true });
+    const result = await readRemoteMarkdown(url, async () => markdownResponse('# Remote\n\nBody.'));
 
     expect(result.text).toBe('# Remote\n\nBody.');
   });
 
   it('reports the HTTP status when the server refuses the document', async () => {
-    const error = await failure(readRemoteMarkdown(url, async () => new Response('nope', { status: 404, statusText: 'Not Found' }), { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => new Response('nope', { status: 404, statusText: 'Not Found' })));
 
     expect(error.kind).toBe('http');
     expect(error.message).toBe('The server returned 404 Not Found.');
   });
 
   it('refuses a web page served at a .md address instead of rendering its HTML as Markdown', async () => {
-    const error = await failure(readRemoteMarkdown(url, async () => new Response('<h1>Page</h1>', { headers: { 'content-type': 'text/html' } }), { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => new Response('<h1>Page</h1>', { headers: { 'content-type': 'text/html' } })));
 
     expect(error.kind).toBe('type');
     expect(error.message).toContain('web page');
@@ -43,7 +43,7 @@ describe('remote Markdown loading', () => {
       headers: { 'content-type': 'text/markdown', 'content-length': String(REMOTE_DOCUMENT_LIMIT_BYTES + 1) },
     });
 
-    const error = await failure(readRemoteMarkdown(url, async () => response, { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => response));
 
     expect(error.kind).toBe('size');
     expect(cancelled).toBe(true);
@@ -60,7 +60,7 @@ describe('remote Markdown loading', () => {
       },
     });
 
-    const error = await failure(readRemoteMarkdown(url, async () => new Response(stream, { headers: { 'content-type': 'text/markdown' } }), { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => new Response(stream, { headers: { 'content-type': 'text/markdown' } })));
 
     expect(error.kind).toBe('size');
     expect(pulls).toBeLessThan(12);
@@ -72,29 +72,45 @@ describe('remote Markdown loading', () => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'TimeoutError')));
       });
 
-    const error = await failure(readRemoteMarkdown(url, hung, { isOriginAllowed: () => true, timeoutMs: 20 }));
+    const error = await failure(readRemoteMarkdown(url, hung, { timeoutMs: 20 }));
 
     expect(error.kind).toBe('timeout');
   });
 
   it('explains a network failure without exposing the underlying error text', async () => {
-    const error = await failure(readRemoteMarkdown(url, async () => { throw new TypeError('Failed to fetch'); }, { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => { throw new TypeError('Failed to fetch'); }));
 
     expect(error.kind).toBe('network');
     expect(error.message).toBe('Could not reach notes.example.test. Check the address and your connection.');
   });
 
-  it('refuses a response redirected to an origin the user has not allowed', async () => {
-    const redirected = Object.defineProperty(markdownResponse('# Elsewhere'), 'url', { value: 'https://elsewhere.example.test/Guide.md' });
+  it('never follows a redirect, so no other server is contacted', async () => {
+    let init: RequestInit | undefined;
+    const redirect = Object.defineProperty(new Response(null, { status: 200 }), 'type', { value: 'opaqueredirect' });
+    const error = await failure(readRemoteMarkdown(url, async (_input, options) => { init = options; return redirect; }));
 
-    const error = await failure(readRemoteMarkdown(url, async () => redirected, { isOriginAllowed: (origin) => origin === url.origin }));
+    expect(init?.redirect).toBe('manual');
+    expect(error.kind).toBe('redirect');
+    expect(error.message).toContain('redirects');
+  });
 
-    expect(error.kind).toBe('origin');
-    expect(error.message).toContain('elsewhere.example.test');
+  it('sends no credentials and no referrer', async () => {
+    let init: RequestInit | undefined;
+    await readRemoteMarkdown(url, async (_input, options) => { init = options; return markdownResponse('# A'); });
+    expect(init).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+  });
+
+  it('stops when the caller cancels the read', async () => {
+    const controller = new AbortController();
+    const hung = (_input: RequestInfo | URL, options?: RequestInit): Promise<Response> =>
+      new Promise((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+    const pending = readRemoteMarkdown(url, hung, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ kind: 'cancelled' });
   });
 
   it('rejects an empty document with a specific message', async () => {
-    const error = await failure(readRemoteMarkdown(url, async () => markdownResponse(''), { isOriginAllowed: () => true }));
+    const error = await failure(readRemoteMarkdown(url, async () => markdownResponse('')));
 
     expect(error.kind).toBe('empty');
   });

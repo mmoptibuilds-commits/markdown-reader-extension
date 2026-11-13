@@ -4,7 +4,7 @@ import { classifyDocument } from './document';
 export const REMOTE_DOCUMENT_LIMIT_BYTES = 8 * 1024 * 1024;
 export const REMOTE_TIMEOUT_MS = 20_000;
 
-export type RemoteErrorKind = 'http' | 'type' | 'size' | 'timeout' | 'network' | 'origin' | 'empty';
+export type RemoteErrorKind = 'http' | 'type' | 'size' | 'timeout' | 'network' | 'redirect' | 'empty' | 'cancelled';
 
 /** An error whose message is safe to show to the reader. */
 export class RemoteDocumentError extends Error {
@@ -15,9 +15,9 @@ export class RemoteDocumentError extends Error {
 }
 
 export interface RemoteReadOptions {
-  /** Called with the final origin when a redirect moved the request elsewhere. */
-  isOriginAllowed(origin: string): boolean | Promise<boolean>;
   timeoutMs?: number;
+  /** Cancels the read, for example when the reader opens another document. */
+  signal?: AbortSignal;
 }
 
 export interface RemoteDocument {
@@ -42,33 +42,37 @@ export function documentNameFromUrl(url: URL): string {
 }
 
 /**
- * Fetches one remote Markdown document. Credentials and the HTTP cache are never used.
+ * Fetches one remote Markdown document. Credentials, the referrer, and the HTTP cache are
+ * never used, and redirects are not followed: the user granted access to this origin only,
+ * so a redirect is reported instead of contacting another server.
  * Every failure is reported as a RemoteDocumentError with a message written for the reader.
  */
 export async function readRemoteMarkdown(
   url: URL,
   fetcher: typeof fetch,
-  options: RemoteReadOptions,
+  options: RemoteReadOptions = {},
 ): Promise<RemoteDocument> {
   const timeoutMs = options.timeoutMs ?? REMOTE_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const timedOut = (): RemoteDocumentError =>
-    new RemoteDocumentError('timeout', `The server did not finish responding within ${Math.round(timeoutMs / 1000)} seconds.`);
+  const cancel = (): void => controller.abort();
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timedOut = (): RemoteDocumentError => options.signal?.aborted
+    ? new RemoteDocumentError('cancelled', 'Loading was cancelled.')
+    : new RemoteDocumentError('timeout', `The server did not finish responding within ${Math.round(timeoutMs / 1000)} seconds.`);
 
   try {
     let response: Response;
     try {
-      response = await fetcher(url, { credentials: 'omit', redirect: 'follow', cache: 'no-store', signal: controller.signal });
+      response = await fetcher(url, { credentials: 'omit', redirect: 'manual', referrerPolicy: 'no-referrer', cache: 'no-store', signal: controller.signal });
     } catch {
       if (controller.signal.aborted) throw timedOut();
       throw new RemoteDocumentError('network', `Could not reach ${url.hostname}. Check the address and your connection.`);
     }
 
-    const finalUrl = new URL(response.url || url.href);
-    if (finalUrl.origin !== url.origin && !(await options.isOriginAllowed(finalUrl.origin))) {
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
       await response.body?.cancel().catch(() => undefined);
-      throw new RemoteDocumentError('origin', `The server redirected to ${finalUrl.origin}. Allow that site, then open this address again.`);
+      throw new RemoteDocumentError('redirect', 'This address redirects to another location. Markdown Reader does not follow redirects, so no other server was contacted. Open the final address instead.');
     }
 
     if (!response.ok) {
@@ -97,9 +101,10 @@ export async function readRemoteMarkdown(
     const bytes = await readBounded(response, controller.signal, timedOut);
     const text = new TextDecoder('utf-8').decode(bytes);
     if (text.length === 0) throw new RemoteDocumentError('empty', 'The server returned an empty document.');
-    return { text, finalUrl: finalUrl.href };
+    return { text, finalUrl: url.href };
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
   }
 }
 

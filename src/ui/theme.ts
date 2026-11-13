@@ -1,51 +1,63 @@
-import type { CSSProperties } from 'react';
-import type { ReaderSettings, ThemeId } from '../core/settings';
+import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react';
+import type { ReaderSettings } from '../core/settings';
+import { paletteVariables, resolveTheme, type ResolvedTheme, type ThemePalette } from '../core/themes';
 
-export interface ThemePalette {
-  background: string;
-  surface: string;
-  foreground: string;
-  muted: string;
-  border: string;
-  accent: string;
-  codeBackground: string;
-  codeForeground: string;
+const darkQuery = '(prefers-color-scheme: dark)';
+const CACHE_KEY = 'markdown-reader-theme';
+
+/** Follows the device's light or dark appearance, including changes while the page is open. */
+export function usePrefersDark(): boolean {
+  const [dark, setDark] = useState(() => window.matchMedia?.(darkQuery).matches ?? false);
+  useEffect(() => {
+    const query = window.matchMedia?.(darkQuery);
+    if (!query) return;
+    const update = (): void => setDark(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return dark;
 }
 
-export const THEME_PALETTES: Record<Exclude<ThemeId, 'system'>, ThemePalette> = {
-  paper: { background: '#f7f6f0', surface: '#fffefa', foreground: '#202820', muted: '#526052', border: '#d9ded3', accent: '#386b4f', codeBackground: '#eceee7', codeForeground: '#27352b' },
-  snow: { background: '#ffffff', surface: '#ffffff', foreground: '#202523', muted: '#56615c', border: '#dde3df', accent: '#276b59', codeBackground: '#f1f4f2', codeForeground: '#202c28' },
-  sepia: { background: '#f2eadb', surface: '#faf5e9', foreground: '#33291f', muted: '#6a5642', border: '#dbccb5', accent: '#80552f', codeBackground: '#e9deca', codeForeground: '#35271a' },
-  graphite: { background: '#1d211e', surface: '#252a26', foreground: '#e7ebe5', muted: '#b0bbb1', border: '#414a43', accent: '#a4d3a7', codeBackground: '#151916', codeForeground: '#dce8dd' },
-  midnight: { background: '#111922', surface: '#18222c', foreground: '#e5edf4', muted: '#b2c0cb', border: '#334351', accent: '#8dd1d6', codeBackground: '#0d141b', codeForeground: '#d9e9ec' },
-};
+/** Writes a palette's variables, appearance, and color-scheme onto the root element. */
+export function applyThemeToRoot(theme: Pick<ResolvedTheme, 'id' | 'appearance' | 'palette'>): void {
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(paletteVariables(theme.palette))) root.style.setProperty(name, value);
+  root.dataset.appearance = theme.appearance;
+  root.dataset.theme = theme.id;
+  root.style.colorScheme = theme.appearance;
+}
 
-export function themeStyle(settings: ReaderSettings): CSSProperties {
-  const selectedCustom = settings.customThemeId
-    ? settings.customThemes.find(({ id }) => id === settings.customThemeId)
-    : undefined;
-  const palette = settings.theme === 'system'
-    ? THEME_PALETTES.snow
-    : THEME_PALETTES[settings.theme];
-  const custom = selectedCustom ? {
-    background: selectedCustom.background,
-    surface: selectedCustom.background,
-    foreground: selectedCustom.foreground,
-    muted: selectedCustom.foreground,
-    border: `color-mix(in srgb, ${selectedCustom.foreground} 27%, transparent)`,
-    accent: selectedCustom.accent,
-    codeBackground: `color-mix(in srgb, ${selectedCustom.foreground} 5%, transparent)`,
-    codeForeground: selectedCustom.foreground,
-  } : palette;
+/**
+ * Applies the active theme to the whole page and returns it. The resolved palette is
+ * remembered in this browser so the next page paints in the right colours before
+ * settings load; it holds only colours.
+ */
+export function useAppliedTheme(settings: Pick<ReaderSettings, 'theme' | 'customThemeId' | 'customThemes'>, enabled = true): ResolvedTheme {
+  const prefersDark = usePrefersDark();
+  const theme = useMemo(() => resolveTheme(settings, prefersDark), [settings.theme, settings.customThemeId, settings.customThemes, prefersDark]);
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    applyThemeToRoot(theme);
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ id: theme.id, appearance: theme.appearance, palette: theme.palette })); } catch { /* Storage can be unavailable. */ }
+  }, [theme, enabled]);
+  return theme;
+}
+
+/** Applies the last theme this browser used, before React renders, to avoid a flash. */
+export function applyCachedTheme(): void {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as { id?: unknown; appearance?: unknown; palette?: unknown } | null;
+    if (!cached || typeof cached.id !== 'string' || (cached.appearance !== 'light' && cached.appearance !== 'dark') || typeof cached.palette !== 'object' || cached.palette === null) return;
+    const palette = cached.palette as Record<string, unknown>;
+    if (!Object.values(palette).every((value) => typeof value === 'string' && /^#[\da-f]{6}$/iu.test(value))) return;
+    applyThemeToRoot({ id: cached.id, appearance: cached.appearance, palette: palette as unknown as ThemePalette });
+  } catch { /* Ignore an unreadable cache. */ }
+}
+
+/** Reading measurements for the document canvas. */
+export function readingStyle(settings: ReaderSettings): CSSProperties {
   return {
-    '--reader-bg': custom.background,
-    '--reader-surface': custom.surface,
-    '--reader-fg': custom.foreground,
-    '--reader-muted': custom.muted,
-    '--reader-border': custom.border,
-    '--reader-accent': custom.accent,
-    '--reader-code-bg': custom.codeBackground,
-    '--reader-code-fg': custom.codeForeground,
     '--reader-font-size': `${settings.fontSize}px`,
     '--reader-line-height': settings.lineHeight,
     '--reader-paragraph-gap': `${settings.paragraphSpacing}em`,
@@ -53,6 +65,7 @@ export function themeStyle(settings: ReaderSettings): CSSProperties {
   } as CSSProperties;
 }
 
-export function themeClass(settings: ReaderSettings): string {
-  return `theme-${settings.customThemeId ? 'custom' : settings.theme}`;
+/** Inline colours for a theme preview card, independent of the page's own theme. */
+export function swatchStyle(palette: ThemePalette): CSSProperties {
+  return paletteVariables(palette) as CSSProperties;
 }

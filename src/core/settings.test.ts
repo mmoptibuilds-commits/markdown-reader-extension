@@ -99,3 +99,34 @@ describe('local settings persistence', () => {
     expect(loaded.theme).toBe('graphite');
   });
 });
+
+describe('single-key shortcut preference', () => {
+  it('is on by default and stays on for settings saved before it existed', () => {
+    expect(normalizeSettings({}).singleKeyShortcuts).toBe(true);
+  });
+
+  it('turns off only for an explicit false', () => {
+    expect(normalizeSettings({ singleKeyShortcuts: false }).singleKeyShortcuts).toBe(false);
+    expect(normalizeSettings({ singleKeyShortcuts: 'no' }).singleKeyShortcuts).toBe(true);
+  });
+});
+
+describe('custom theme colours from stored or imported settings', () => {
+  it('keeps valid hexadecimal colours in lowercase six-digit form', () => {
+    const [theme] = normalizeSettings({ customThemes: [{ id: 'a', name: 'A', background: '#FFF', foreground: '#112233', accent: '#AbCdEf' }] }).customThemes;
+    expect(theme).toMatchObject({ background: '#ffffff', foreground: '#112233', accent: '#abcdef' });
+  });
+
+  it('replaces invalid lengths and non-hex values with defaults', () => {
+    const [theme] = normalizeSettings({ customThemes: [{ id: 'a', name: 'A', background: '#12345', foreground: 'inherit', accent: '#1234567' }] }).customThemes;
+    expect(theme?.background).toMatch(/^#[\da-f]{6}$/u);
+    expect(theme?.background).not.toBe('#12345');
+    expect(theme?.foreground).not.toBe('inherit');
+    expect(theme?.accent).not.toBe('#1234567');
+  });
+
+  it('keeps themes imported from an earlier export', () => {
+    const exported = exportSettings({ ...DEFAULT_SETTINGS, customThemeId: 'night', customThemes: [{ id: 'night', name: 'Night', background: '#101418', foreground: '#e8edf2', accent: '#7cc4e0' }] });
+    expect(parseSettingsImport(exported).customThemeId).toBe('night');
+  });
+});

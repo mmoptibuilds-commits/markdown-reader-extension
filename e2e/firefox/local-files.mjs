@@ -69,8 +69,8 @@ try {
   /** Flips the real Settings switch, the way a user would. */
   const setOptIn = async (on) => {
     await inOptions(`(() => {
-      const label = [...document.querySelectorAll('label.toggle-setting')].find((item) => item.textContent.includes('Automatically open local Markdown files'));
-      const input = label.querySelector('input');
+      const label = [...document.querySelectorAll('.setting-row label')].find((item) => item.textContent.includes('Open local Markdown files automatically'));
+      const input = document.getElementById(label.htmlFor);
       if (input.checked !== ${on}) input.click();
       return true;
     })()`);
@@ -173,6 +173,14 @@ try {
     }
   });
 
+  await check('a reader tab whose handoff is gone offers recovery instead of a blank page', async () => {
+    const reader = await firefox.openTab(`${EXTENSION}/reader.html?url=${encodeURIComponent(fileUrl('Guide.md'))}&local=missing-token-0000`);
+    await waitFor(async () => /no longer has this file/u.test(await firefox.evaluate(reader, 'document.querySelector(".reader-problem")?.textContent ?? ""')), 'recovery message');
+    const buttons = await firefox.evaluate(reader, 'JSON.stringify([...document.querySelectorAll(".reader-problem button")].map((b) => b.textContent))');
+    assert.ok(buttons.includes('Go back to the file') && buttons.includes('Open file'), buttons);
+    await firefox.send('browsingContext.close', { context: reader }).catch(() => undefined);
+  });
+
   await check('reload keeps the document', async () => {
     await open(fileUrl('Guide.md'));
     await expectReader('Local guide');
@@ -180,13 +188,18 @@ try {
     await expectReader('Local guide');
   });
 
-  await check('back and forward work without a redirect loop', async () => {
+  await check('back shows the original file with an Open in reader notice, and forward returns to the reader', async () => {
     await open(fileUrl('page.html'));
     await open(fileUrl('Guide.md'));
     await expectReader('Local guide');
     await firefox.send('browsingContext.traverseHistory', { context: tab, delta: -1 });
+    await waitFor(async () => (await firefox.url(tab)) === fileUrl('Guide.md'), 'back to Guide.md');
+    await waitFor(() => firefox.evaluate(tab, '/Open in reader/u.test(document.getElementById("markdown-reader-notice")?.shadowRoot?.textContent ?? "")'), 'notice');
+    await delay(1500);
+    assert.equal(await firefox.url(tab), fileUrl('Guide.md'), 'no redirect loop');
+    await firefox.send('browsingContext.traverseHistory', { context: tab, delta: -1 });
     await waitFor(async () => (await firefox.url(tab)) === fileUrl('page.html'), 'back to page.html');
-    await firefox.send('browsingContext.traverseHistory', { context: tab, delta: 1 });
+    await firefox.send('browsingContext.traverseHistory', { context: tab, delta: 2 });
     await expectReader('Local guide');
   });
 
@@ -210,9 +223,13 @@ try {
     console.log(`    large document shown after ${Date.now() - started} ms`);
   });
 
-  await check('explains why a file over the 4 MB handoff limit cannot open automatically', async () => {
+  await check('a file over the 4 MB handoff limit stays on the original file with a notice', async () => {
     await open(fileUrl('too-large.md'));
-    await waitFor(async () => /larger than 4 MB/u.test(await readerError()), 'size message', 30_000);
+    await delay(2500);
+    assert.equal(await firefox.url(tab), fileUrl('too-large.md'), 'the tab was not redirected');
+    const notice = await firefox.evaluate(tab, 'document.getElementById("markdown-reader-notice")?.shadowRoot?.textContent ?? ""');
+    assert.match(notice, /larger than 4 MB/u);
+    assert.equal(await firefox.evaluate(tab, 'document.querySelector("pre")?.textContent.length > 4000000'), true, 'the original text is still shown');
   });
 
   await check('revoking access in about:addons stops automatic opening', async () => {
