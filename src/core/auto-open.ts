@@ -67,14 +67,17 @@ export function plainTextOfDocument(doc: Document): string | undefined {
 }
 
 /**
- * Chromium blocks reloading a reader page whose history entry was created by a file page's
+ * Chromium blocks reloading a reader page whose history entry was created by a page's
  * redirect to the web-accessible (dynamic) reader URL. Replacing the entry once from the
  * reader itself makes reload and back/forward work. Returns the replacement address, or
- * undefined when the page is already settled or was not opened for a local file.
+ * undefined when the page is already settled or was not opened for a local or web document.
  */
 export function settledReaderLocation(href: string): string | undefined {
   const url = new URL(href);
-  if (!url.searchParams.get('url')?.startsWith('file:') || url.searchParams.has('settled')) return undefined;
+  const documentUrl = url.searchParams.get('url');
+  if (!documentUrl || url.searchParams.has('settled')) return undefined;
+  const protocol = /^([a-z][a-z0-9+.-]*:)/i.exec(documentUrl)?.[1]?.toLowerCase();
+  if (protocol !== 'file:' && protocol !== 'http:' && protocol !== 'https:') return undefined;
   url.searchParams.set('settled', '1');
   return url.href;
 }

@@ -131,8 +131,8 @@ describe('plain-text document extraction', () => {
   });
 });
 
-describe('settling a reader page reached from a local file', () => {
-  it('re-enters the reader once, from the reader itself, keeping every parameter', () => {
+describe('settling a reader page reached by automatic opening', () => {
+  it('re-enters the reader once for a local file, keeping every parameter', () => {
     const href = 'chrome-extension://abc/reader.html?url=file%3A%2F%2F%2Fa%2520b.md&local=tok_12345678';
     const next = settledReaderLocation(href);
     expect(next).toBeDefined();
@@ -143,8 +143,27 @@ describe('settling a reader page reached from a local file', () => {
     expect(settledReaderLocation(next ?? '')).toBeUndefined();
   });
 
-  it('leaves web documents and plain reader pages alone', () => {
-    expect(settledReaderLocation('chrome-extension://abc/reader.html?url=https%3A%2F%2Fexample.test%2Fa.md')).toBeUndefined();
-    expect(settledReaderLocation('chrome-extension://abc/reader.html')).toBeUndefined();
+  it.each([
+    ['https://example.test/a.md#Heading', 'https%3A%2F%2Fexample.test%2Fa.md%23Heading'],
+    ['http://127.0.0.1:8080/docs/read%20me.md?ref=1', 'http%3A%2F%2F127.0.0.1%3A8080%2Fdocs%2Fread%2520me.md%3Fref%3D1'],
+    ['HTTPS://EXAMPLE.TEST/A.MD', 'HTTPS%3A%2F%2FEXAMPLE.TEST%2FA.MD'],
+  ])('re-enters the reader once for the web document %s', (documentUrl, encoded) => {
+    const next = settledReaderLocation(`moz-extension://abc/reader.html?url=${encoded}`);
+    expect(next).toBeDefined();
+    const url = new URL(next ?? '');
+    expect(next?.startsWith('moz-extension://abc/reader.html?')).toBe(true);
+    expect(url.searchParams.get('url')).toBe(documentUrl);
+    expect(url.searchParams.get('settled')).toBe('1');
+    expect(settledReaderLocation(next ?? '')).toBeUndefined();
+  });
+
+  it.each([
+    ['a plain reader page', 'chrome-extension://abc/reader.html'],
+    ['an empty document address', 'chrome-extension://abc/reader.html?url='],
+    ['an unsupported scheme', 'chrome-extension://abc/reader.html?url=javascript%3Aalert(1)'],
+    ['a data address', 'chrome-extension://abc/reader.html?url=data%3Atext%2Fmarkdown%2C%23%20x'],
+    ['a relative address', 'chrome-extension://abc/reader.html?url=%2Fa.md'],
+  ])('leaves %s alone', (_label, href) => {
+    expect(settledReaderLocation(href)).toBeUndefined();
   });
 });
